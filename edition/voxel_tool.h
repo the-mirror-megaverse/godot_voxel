@@ -21,6 +21,7 @@ public:
 	enum Mode {
 		MODE_ADD = ops::MODE_ADD,
 		MODE_REMOVE = ops::MODE_REMOVE,
+		MODE_BOTH = ops::MODE_BOTH,
 		MODE_SET = ops::MODE_SET,
 		MODE_TEXTURE_PAINT = ops::MODE_TEXTURE_PAINT
 	};
