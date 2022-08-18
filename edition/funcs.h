@@ -317,7 +317,6 @@ struct TextureBlendOp {
 enum Mode { //
 	MODE_ADD,
 	MODE_REMOVE,
-	MODE_BOTH, // Just used in SdfFlattenOperation
 	MODE_SET,
 	MODE_TEXTURE_PAINT
 };
@@ -440,55 +439,6 @@ struct DoShape {
 };
 
 typedef DoShape<SdfHemisphere> DoHemisphere;
-
-template <typename Shape_T>
-struct SdfFlattenOperation {
-	Shape_T shape;
-	Mode mode;
-	float strength;
-	Plane plane;
-
-	inline int16_t operator()(Vector3i pos, int16_t sdf) const {
-		Vector3 p = Vector3(pos);
-		float src = s16_to_snorm(sdf);
-		if (!plane.is_point_over(p))
-		{
-			if (mode == MODE_ADD || mode == MODE_BOTH) {
-				return snorm_to_s16(Math::lerp(src, math::sdf_union(src, shape(p)), strength));
-			}
-		} else {
-			if (mode == MODE_REMOVE || mode == MODE_BOTH) {
-				return snorm_to_s16(Math::lerp(src, math::sdf_subtract(src, shape(p)), strength));
-			}
-		}
-	}
-};
-
-struct DoFlattenSphere {
-	SdfSphere shape;
-	Mode mode;
-	VoxelDataGrid blocks;
-	Box3i box;
-	VoxelBufferInternal::ChannelId channel;
-	real_t strength;
-	uint32_t blocky_value;
-	Plane plane;
-
-	void operator()() {
-		ZN_PROFILE_SCOPE();
-
-		if (channel == VoxelBufferInternal::CHANNEL_SDF) {
-			SdfFlattenOperation<SdfSphere> op;
-			op.shape = shape;
-			op.strength = strength;
-			op.plane = plane;
-			op.mode = mode;
-			blocks.write_box(box, VoxelBufferInternal::CHANNEL_SDF, op);
-		} else {
-			ERR_PRINT("Blocky Flatten Operation not implemented");
-		}
-	}
-};
 
 }; // namespace zylann::voxel::ops
 
