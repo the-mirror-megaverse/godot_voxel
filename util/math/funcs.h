@@ -113,21 +113,21 @@ inline T cubed(const T x) {
 //
 // Example with division by 3:
 //
-//    x   | `/` | floordiv
-// ----------------------
-//    -6  | -2  | -2
-//    -5  | -1  | -2
-//    -4  | -1  | -2
-//    -3  | -1  | -1
-//    -2  | 0   | -1
-//    -1  | 0   | -1
-//    0   | 0   | 0
-//    1   | 0   | 0
-//    2   | 0   | 0
-//    3   | 1   | 1
-//    4   | 1   | 1
-//    5   | 1   | 1
-//    6   | 2   | 2
+//    x   | `/` | floordiv | ceildiv
+// ----------------------------------
+//    -6  | -2  | -2       | -2
+//    -5  | -1  | -2       | -1
+//    -4  | -1  | -2       | -1
+//    -3  | -1  | -1       | -1
+//    -2  | 0   | -1       | 0
+//    -1  | 0   | -1       | 0
+//    0   | 0   | 0        | 0
+//    1   | 0   | 0        | 1
+//    2   | 0   | 0        | 1
+//    3   | 1   | 1        | 1
+//    4   | 1   | 1        | 2
+//    5   | 1   | 1        | 2
+//    6   | 2   | 2        | 2
 inline int floordiv(int x, int d) {
 #ifdef DEBUG_ENABLED
 	ZN_ASSERT(d > 0);
@@ -139,15 +139,28 @@ inline int floordiv(int x, int d) {
 	}
 }
 
+// ceildiv(0, 10) == 0
+// ceildiv(1, 10) == 1
+// ceildiv(5, 10) == 1
+// ceildiv(10, 10) == 1
+// ceildiv(11, 10) == 2
 inline int ceildiv(int x, int d) {
-	return -floordiv(-x, d);
+#ifdef DEBUG_ENABLED
+	ZN_ASSERT(d > 0);
+#endif
+	if (x > 0) {
+		return (x + d - 1) / d;
+	} else {
+		return x / d;
+	}
+	// return -floordiv(-x, d);
 }
 
 // TODO Rename `wrapi`
 // `Math::wrapi` with zero min
 inline int wrap(int x, int d) {
 	return ((unsigned int)x - (x < 0)) % (unsigned int)d;
-	//return ((x % d) + d) % d;
+	// return ((x % d) + d) % d;
 }
 
 // Math::wrapf with zero min
@@ -224,6 +237,17 @@ inline unsigned int get_shift_from_power_of_two_32(unsigned int pot) {
 		}
 	}
 	ZN_CRASH_MSG("Input was not a valid power of two");
+	return 0;
+}
+
+// If `num` is a power of two, returns the exponent. Otherwise, returns the exponent of the next power of two.
+inline unsigned int get_next_power_of_two_32_shift(unsigned int num) {
+	for (unsigned int i = 0; i < 32; ++i) {
+		if ((num >> i) == 1) {
+			return i;
+		}
+	}
+	ZN_CRASH_MSG("Unreachable code");
 	return 0;
 }
 
@@ -386,6 +410,31 @@ inline double deg_to_rad(double p_y) {
 
 inline float deg_to_rad(float p_y) {
 	return p_y * PI_32 / 180.f;
+}
+
+// Given source and destination intervals, returns parameters to use in an `a*x+b` formula to apply such remap.
+// If the source interval is approximatively empty, returns zero values.
+inline void remap_intervals_to_linear_params(
+		float min0, float max0, float min1, float max1, float &out_a, float &out_b) {
+	// min1 + (max1 - min1) * (x - min0) / (max0 - min0)
+	// min1 + (max1 - min1) * (x - min0) * (1/(max0 - min0))
+	// min1 +       A       * (x - min0) *        B
+	// min1 + A * B * (x - min0)
+	// min1 + A * B * x - A * B * min0
+	// min1 +   C   * x -   C   * min0
+	// min1 - C * min0 + C * x
+	// (min1 - C * min0) + C * x
+	//         b         + a * x
+	// a * x + b
+	if (Math::is_equal_approx(max0, min0)) {
+		out_a = 0;
+		out_b = 0;
+		return;
+	}
+	const float a = (max1 - min1) / (max0 - min0);
+	const float b = min1 - a * min0;
+	out_a = a;
+	out_b = b;
 }
 
 } // namespace zylann::math

@@ -45,7 +45,7 @@ public:
 	inline unsigned int get_data_block_size() const {
 		return 1 << get_data_block_size_pow2();
 	}
-	//void set_data_block_size_po2(unsigned int p_block_size_po2);
+	// void set_data_block_size_po2(unsigned int p_block_size_po2);
 
 	unsigned int get_mesh_block_size_pow2() const;
 	inline unsigned int get_mesh_block_size() const {
@@ -140,7 +140,7 @@ public:
 	void get_meshed_block_positions(std::vector<Vector3i> &out_positions) const;
 	Array get_mesh_block_surface(Vector3i block_pos) const;
 
-	uint32_t get_volume_id() const override {
+	VolumeID get_volume_id() const override {
 		return _volume_id;
 	}
 
@@ -157,15 +157,15 @@ private:
 	void process();
 	void process_viewers();
 	void process_viewer_data_box_change(
-			uint32_t viewer_id, Box3i prev_data_box, Box3i new_data_box, bool can_load_blocks);
-	//void process_received_data_blocks();
+			ViewerID viewer_id, Box3i prev_data_box, Box3i new_data_box, bool can_load_blocks);
+	// void process_received_data_blocks();
 	void process_meshing();
 	void apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob);
 	void apply_data_block_response(VoxelEngine::BlockDataOutput &ob);
 
 	void _on_stream_params_changed();
 	// void _set_block_size_po2(int p_block_size_po2);
-	//void make_all_view_dirty();
+	// void make_all_view_dirty();
 	void start_updater();
 	void stop_updater();
 	void start_streamer();
@@ -178,7 +178,7 @@ private:
 	void unview_mesh_block(Vector3i bpos, bool mesh_flag, bool collision_flag);
 	// void unload_data_block(Vector3i bpos);
 	void unload_mesh_block(Vector3i bpos);
-	//void make_data_block_dirty(Vector3i bpos);
+	// void make_data_block_dirty(Vector3i bpos);
 	void try_schedule_mesh_update(VoxelMeshBlockVT &block);
 	void try_schedule_mesh_update_from_data(const Box3i &box_in_voxels);
 
@@ -191,11 +191,11 @@ private:
 	void emit_data_block_loaded(Vector3i bpos);
 	void emit_data_block_unloaded(Vector3i bpos);
 
-	bool try_get_paired_viewer_index(uint32_t id, size_t &out_i) const;
+	bool try_get_paired_viewer_index(ViewerID id, size_t &out_i) const;
 
-	void notify_data_block_enter(const VoxelDataBlock &block, Vector3i bpos, uint32_t viewer_id);
+	void notify_data_block_enter(const VoxelDataBlock &block, Vector3i bpos, ViewerID viewer_id);
 
-	void get_viewers_in_area(std::vector<int> &out_viewer_ids, Box3i voxel_box) const;
+	void get_viewers_in_area(std::vector<ViewerID> &out_viewer_ids, Box3i voxel_box) const;
 
 #ifdef ZN_GODOT
 	// Called each time a data block enters a viewer's area.
@@ -214,7 +214,7 @@ private:
 	// Bindings
 	Vector3i _b_voxel_to_data_block(Vector3 pos) const;
 	Vector3i _b_data_block_to_voxel(Vector3i pos) const;
-	//void _force_load_blocks_binding(Vector3 center, Vector3 extents) { force_load_blocks(center, extents); }
+	// void _force_load_blocks_binding(Vector3 center, Vector3 extents) { force_load_blocks(center, extents); }
 	Ref<VoxelSaveCompletionTracker> _b_save_modified_blocks();
 	void _b_save_block(Vector3i p_block_pos);
 	void _b_set_bounds(AABB aabb);
@@ -223,7 +223,7 @@ private:
 	Dictionary _b_get_statistics() const;
 	PackedInt32Array _b_get_viewer_network_peer_ids_in_area(Vector3i area_origin, Vector3i area_size) const;
 
-	uint32_t _volume_id = 0;
+	VolumeID _volume_id;
 
 	// Paired viewers are VoxelViewers which intersect with the boundaries of the volume
 	struct PairedViewer {
@@ -235,7 +235,7 @@ private:
 			bool requires_collisions = false;
 			bool requires_meshes = false;
 		};
-		uint32_t id;
+		ViewerID id;
 		State state;
 		State prev_state;
 	};
@@ -257,7 +257,7 @@ private:
 	struct LoadingBlock {
 		RefCount viewers;
 		// TODO Optimize allocations here
-		std::vector<uint32_t> viewers_to_notify;
+		std::vector<ViewerID> viewers_to_notify;
 	};
 
 	// Blocks currently being loaded.
@@ -284,7 +284,7 @@ private:
 	unsigned int _collision_mask = 1;
 	float _collision_margin = constants::DEFAULT_COLLISION_MARGIN;
 	bool _run_stream_in_editor = true;
-	//bool _stream_enabled = false;
+	// bool _stream_enabled = false;
 	bool _block_enter_notification_enabled = false;
 	bool _area_edit_notification_enabled = false;
 	// If enabled, VoxelViewers will cause blocks to automatically load around them.

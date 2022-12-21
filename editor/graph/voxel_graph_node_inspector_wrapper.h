@@ -2,7 +2,6 @@
 #define VOXEL_GRAPH_NODE_INSPECTOR_WRAPPER_H
 
 #include "../../generators/graph/voxel_generator_graph.h"
-#include "../../util/godot/editor_undo_redo_manager.h"
 #include "../../util/godot/ref_counted.h"
 
 namespace zylann::voxel {
@@ -15,8 +14,13 @@ class VoxelGraphEditor;
 class VoxelGraphNodeInspectorWrapper : public RefCounted {
 	GDCLASS(VoxelGraphNodeInspectorWrapper, RefCounted)
 public:
-	void setup(uint32_t p_node_id, Ref<EditorUndoRedoManager> ur, VoxelGraphEditor *ed);
-	inline Ref<VoxelGraphFunction> get_graph() const {
+	void setup(uint32_t p_node_id, VoxelGraphEditor *ed);
+
+	// May be called when the graph editor is destroyed. This prevents from accessing dangling pointers in the eventual
+	// case where UndoRedo invokes functions from this editor after the plugin is removed.
+	void detach_from_graph_editor();
+
+	inline Ref<pg::VoxelGraphFunction> get_graph() const {
 		return _graph;
 	}
 	inline Ref<VoxelGeneratorGraph> get_generator() const {
@@ -32,13 +36,9 @@ protected:
 private:
 	static void _bind_methods();
 
-	Ref<VoxelGraphFunction> _graph;
+	Ref<pg::VoxelGraphFunction> _graph;
 	Ref<VoxelGeneratorGraph> _generator;
 	uint32_t _node_id = ProgramGraph::NULL_ID;
-	// TODO Not sure if using `EditorUndoRedoManager` directly is the right thing to do?
-	// DictionaryPropertyEdit kept using this manager when it got introduced in place of the old global UndoRedo...
-	// there doesn't seem to be any documentation yet for this class
-	Ref<EditorUndoRedoManager> _undo_redo;
 	VoxelGraphEditor *_graph_editor = nullptr;
 };
 

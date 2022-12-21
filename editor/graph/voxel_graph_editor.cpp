@@ -1,7 +1,7 @@
 #include "voxel_graph_editor.h"
 #include "../../constants/voxel_string_names.h"
+#include "../../generators/graph/node_type_db.h"
 #include "../../generators/graph/voxel_generator_graph.h"
-#include "../../generators/graph/voxel_graph_node_db.h"
 #include "../../terrain/voxel_node.h"
 #include "../../util/godot/array.h"
 #include "../../util/godot/button.h"
@@ -17,8 +17,10 @@
 #include "../../util/godot/h_box_container.h"
 #include "../../util/godot/input_enums.h"
 #include "../../util/godot/input_event_mouse_button.h"
+#include "../../util/godot/input_event_mouse_motion.h"
 #include "../../util/godot/label.h"
 #include "../../util/godot/menu_button.h"
+#include "../../util/godot/mouse_button.h"
 #include "../../util/godot/node.h"
 #include "../../util/godot/option_button.h"
 #include "../../util/godot/popup_menu.h"
@@ -38,6 +40,8 @@
 
 namespace zylann::voxel {
 
+using namespace pg;
+
 const char *VoxelGraphEditor::SIGNAL_NODE_SELECTED = "node_selected";
 const char *VoxelGraphEditor::SIGNAL_NOTHING_SELECTED = "nothing_selected";
 const char *VoxelGraphEditor::SIGNAL_NODES_DELETED = "nodes_deleted";
@@ -52,6 +56,7 @@ enum ToolbarMenuIDs {
 	MENU_PREVIEW_AXES,
 	MENU_PREVIEW_AXES_XY,
 	MENU_PREVIEW_AXES_XZ,
+	MENU_PREVIEW_RESET_LOCATION,
 	MENU_GENERATE_SHADER
 };
 
@@ -109,9 +114,10 @@ VoxelGraphEditor::VoxelGraphEditor() {
 				sub_menu->set_name("PreviewAxisMenu");
 				sub_menu->add_radio_check_item("XY", MENU_PREVIEW_AXES_XY);
 				sub_menu->add_radio_check_item("XZ", MENU_PREVIEW_AXES_XZ);
+				sub_menu->add_item("Reset location", MENU_PREVIEW_RESET_LOCATION);
 				sub_menu->connect("id_pressed", ZN_GODOT_CALLABLE_MP(this, VoxelGraphEditor, _on_menu_id_pressed));
 				popup_menu->add_child(sub_menu);
-				popup_menu->add_submenu_item(TTR("Preview Axes"), sub_menu->get_name(), MENU_PREVIEW_AXES);
+				popup_menu->add_submenu_item(ZN_TTR("Preview Axes"), sub_menu->get_name(), MENU_PREVIEW_AXES);
 				_preview_axes_menu = sub_menu;
 				update_preview_axes_menu();
 			}
@@ -153,6 +159,13 @@ VoxelGraphEditor::VoxelGraphEditor() {
 	_graph_edit = memnew(GraphEdit);
 	_graph_edit->set_anchors_preset(Control::PRESET_FULL_RECT);
 	_graph_edit->set_right_disconnects(true);
+	// TODO Performance: sorry, had to turn off AA because Godot's current implementation is incredibly slow.
+	// It slows down the editor a lot when a graph has lots of connections. Because despite Godot 4 now supporting
+	// 2D MSAA, it still relies on a fake AA method which draws 9 times the same line and allocates
+	// memory (malloc) on the fly. See `RendererCanvasCull::canvas_item_add_polyline`.
+	// 2D MSAA also is only exposed in Project Settings, which does not apply to editor UIs... (and shouldn't, but there
+	// should be a setting in Editor Settings).
+	_graph_edit->set_connection_lines_antialiased(false);
 	_graph_edit->set_v_size_flags(Control::SIZE_EXPAND_FILL);
 	_graph_edit->connect("gui_input", ZN_GODOT_CALLABLE_MP(this, VoxelGraphEditor, _on_graph_edit_gui_input));
 	_graph_edit->connect(
@@ -169,14 +182,14 @@ VoxelGraphEditor::VoxelGraphEditor() {
 	add_child(vbox_container);
 
 	_context_menu = memnew(PopupMenu);
-	FixedArray<PopupMenu *, VoxelGraphNodeDB::CATEGORY_COUNT> category_menus;
+	FixedArray<PopupMenu *, CATEGORY_COUNT> category_menus;
 	for (unsigned int i = 0; i < category_menus.size(); ++i) {
-		if (i == VoxelGraphNodeDB::CATEGORY_RELAY) {
+		if (i == CATEGORY_RELAY) {
 			category_menus[i] = nullptr;
 			_context_menu->add_item("Relay", VoxelGraphFunction::NODE_RELAY);
 			continue;
 		}
-		String name = VoxelGraphNodeDB::get_category_name(VoxelGraphNodeDB::Category(i));
+		String name = get_category_name(Category(i));
 		PopupMenu *menu = memnew(PopupMenu);
 		menu->set_name(name);
 		menu->connect("id_pressed", ZN_GODOT_CALLABLE_MP(this, VoxelGraphEditor, _on_context_menu_id_pressed));
@@ -186,15 +199,15 @@ VoxelGraphEditor::VoxelGraphEditor() {
 	}
 	// TODO Usability: have CustomInput and CustomOutput subcategories based on I/O definitions, + a "new" option for
 	// unbound
-	for (int i = 0; i < VoxelGraphNodeDB::get_singleton().get_type_count(); ++i) {
+	for (int i = 0; i < NodeTypeDB::get_singleton().get_type_count(); ++i) {
 		if (i == VoxelGraphFunction::NODE_RELAY) {
 			continue;
 		}
-		const VoxelGraphNodeDB::NodeType &node_type = VoxelGraphNodeDB::get_singleton().get_type(i);
+		const NodeType &node_type = NodeTypeDB::get_singleton().get_type(i);
 		PopupMenu *menu = category_menus[node_type.category];
 		ZN_ASSERT(menu != nullptr);
 		if (i == VoxelGraphFunction::NODE_FUNCTION) {
-			menu->add_item(TTR("Browse..."), CONTEXT_MENU_FUNCTION_BROWSE);
+			menu->add_item(ZN_TTR("Browse..."), CONTEXT_MENU_FUNCTION_BROWSE);
 #ifdef ZN_GODOT
 			menu->add_item(TTR("Quick Open..."), CONTEXT_MENU_FUNCTION_QUICK_OPEN);
 #endif
@@ -221,12 +234,13 @@ VoxelGraphEditor::VoxelGraphEditor() {
 	_function_file_dialog->set_file_mode(EditorFileDialog::FILE_MODE_OPEN_FILE);
 	// TODO Usability: there is no way to limit a file dialog to a specific TYPE of resource, only file extensions. So
 	// it's not useful because text resources are almost all using `.tres`...
-	_function_file_dialog->add_filter("*.tres", TTR("Text Resource"));
-	_function_file_dialog->add_filter("*.res", TTR("Binary Resource"));
+	_function_file_dialog->add_filter("*.tres", ZN_TTR("Text Resource"));
+	_function_file_dialog->add_filter("*.res", ZN_TTR("Binary Resource"));
 	_function_file_dialog->connect(
 			"file_selected", ZN_GODOT_CALLABLE_MP(this, VoxelGraphEditor, _on_function_file_dialog_file_selected));
 	add_child(_function_file_dialog);
 
+	// TODO GDX: EditorQuickOpen is not exposed to extensions
 #ifdef ZN_GODOT
 	_function_quick_open_dialog = memnew(EditorQuickOpen);
 	_function_quick_open_dialog->connect(
@@ -292,9 +306,12 @@ void VoxelGraphEditor::set_graph(Ref<VoxelGraphFunction> graph) {
 	_debug_renderer.clear();
 
 	build_gui_from_graph();
-	update_functions();
 
-	//schedule_preview_update();
+	if (_graph.is_valid()) {
+		update_functions();
+	}
+
+	// schedule_preview_update();
 }
 
 Ref<VoxelGraphFunction> VoxelGraphEditor::get_graph() const {
@@ -305,14 +322,17 @@ void VoxelGraphEditor::set_undo_redo(Ref<EditorUndoRedoManager> undo_redo) {
 	_undo_redo = undo_redo;
 }
 
+Ref<EditorUndoRedoManager> VoxelGraphEditor::get_undo_redo() const {
+	return _undo_redo;
+}
+
 void VoxelGraphEditor::set_voxel_node(VoxelNode *node) {
 	_voxel_node = node;
 	if (_voxel_node == nullptr) {
 		ZN_PRINT_VERBOSE("Reference node for VoxelGraph gizmos: null");
 		_debug_renderer.set_world(nullptr);
 	} else {
-		ZN_PRINT_VERBOSE(
-				format("Reference node for VoxelGraph gizmos: {}", GodotStringWrapper(String(node->get_path()))));
+		ZN_PRINT_VERBOSE(format("Reference node for VoxelGraph gizmos: {}", String(node->get_path())));
 		_debug_renderer.set_world(_voxel_node->get_world_3d().ptr());
 	}
 }
@@ -437,6 +457,13 @@ void VoxelGraphEditor::create_node_gui(uint32_t node_id) {
 	ZN_PRINT_ERROR("`Callable::bind()` isn't working in GodotCpp! Can't handle dragging and resizing nodes action with "
 				   "UndoRedo.");
 #endif
+
+	VoxelGraphEditorNodePreview *preview = node_view->get_preview();
+	if (preview != nullptr) {
+		preview->update_display_settings(**_graph, node_id);
+
+		preview->connect("gui_input", ZN_GODOT_CALLABLE_MP(this, VoxelGraphEditor, _on_graph_node_preview_gui_input));
+	}
 
 	_graph_edit->add_child(node_view);
 }
@@ -577,7 +604,7 @@ void VoxelGraphEditor::_on_graph_edit_connection_request(
 	const uint32_t src_node_id = src_node_view->get_generator_node_id();
 	const uint32_t dst_node_id = dst_node_view->get_generator_node_id();
 
-	//print("Connection attempt from ", from, ":", from_slot, " to ", to, ":", to_slot)
+	// print("Connection attempt from ", from, ":", from_slot, " to ", to, ":", to_slot)
 
 	if (!_graph->is_valid_connection(src_node_id, from_slot, dst_node_id, to_slot)) {
 		ZN_PRINT_VERBOSE("Connection is invalid");
@@ -681,7 +708,7 @@ void VoxelGraphEditor::_on_graph_edit_delete_nodes_request(Array node_names) {
 		}
 
 		// Params undo
-		const size_t param_count = VoxelGraphNodeDB::get_singleton().get_type(node_type_id).params.size();
+		const size_t param_count = NodeTypeDB::get_singleton().get_type(node_type_id).params.size();
 		for (size_t j = 0; j < param_count; ++j) {
 			Variant param_value = _graph->get_node_param(node_id, j);
 			_undo_redo->add_undo_method(*_graph, "set_node_param", node_id, ZN_SIZE_T_TO_VARIANT(j), param_value);
@@ -717,15 +744,19 @@ void VoxelGraphEditor::_on_menu_id_pressed(int id) {
 			break;
 
 		case MENU_PREVIEW_AXES_XY:
-			_preview_axes = PREVIEW_XY;
+			_preview_axes = PREVIEW_AXES_XY;
 			schedule_preview_update();
 			update_preview_axes_menu();
 			break;
 
 		case MENU_PREVIEW_AXES_XZ:
-			_preview_axes = PREVIEW_XZ;
+			_preview_axes = PREVIEW_AXES_XZ;
 			schedule_preview_update();
 			update_preview_axes_menu();
+			break;
+
+		case MENU_PREVIEW_RESET_LOCATION:
+			set_preview_transform(Vector2f(0, 0), 1.f);
 			break;
 
 		case MENU_PROFILE:
@@ -745,11 +776,12 @@ void VoxelGraphEditor::_on_menu_id_pressed(int id) {
 
 		case MENU_GENERATE_SHADER: {
 			ERR_FAIL_COND(_generator.is_null());
-			const String code = _generator->generate_shader();
-			if (code == "") {
+			VoxelGenerator::ShaderSourceData sd;
+			if (!_generator->get_shader_source(sd)) {
 				return;
 			}
-			_shader_dialog->set_shader_code(code);
+			// TODO Include uniforms in that version?
+			_shader_dialog->set_shader_code(sd.glsl);
 			_shader_dialog->popup_centered();
 		} break;
 
@@ -788,7 +820,7 @@ void VoxelGraphEditor::_on_node_resize_request(Vector2 new_size, int node_id) {
 	ZN_ASSERT_RETURN(_graph.is_valid());
 
 	// TODO Not sure if EDSCALE has to be unapplied in this case?
-	_undo_redo->create_action(TTR("Resize Node"), UndoRedo::MERGE_ENDS);
+	_undo_redo->create_action(ZN_TTR("Resize Node"), UndoRedo::MERGE_ENDS);
 	_undo_redo->add_do_method(this, "set_node_size", node_id, new_size);
 	_undo_redo->add_do_method(_graph.ptr(), "set_node_gui_size", node_id, new_size);
 	_undo_redo->add_undo_method(this, "set_node_size", node_id, node_view->get_size());
@@ -805,6 +837,50 @@ void VoxelGraphEditor::set_node_size(int id, Vector2 size) {
 	// This function is used solely for the UI, since we should not pass node pointers directly to UndoRedo, they could
 	// have been deleted when the Undo action is called later
 	//_graph->set_node_gui_size(id, size / EDSCALE);
+}
+
+void VoxelGraphEditor::_on_graph_node_preview_gui_input(Ref<InputEvent> event) {
+	Ref<InputEventMouseMotion> mm = event;
+	if (mm.is_valid()) {
+		// Ctrl+Drag above any preview to pan around the area they render.
+		if (mm->is_command_or_control_pressed() &&
+				(mm->get_button_mask() & ZN_GODOT_MouseButton_MASK_MIDDLE) != ZN_GODOT_MouseButton_NONE) {
+			const Vector2 rel = mm->get_relative();
+			set_preview_transform(_preview_offset - Vector2f(rel.x, -rel.y) * _preview_scale, _preview_scale);
+
+			// Prevent panning of GraphEdit
+			get_viewport()->set_input_as_handled();
+		}
+	}
+
+	Ref<InputEventMouseButton> mb = event;
+	if (mb.is_valid()) {
+		// Ctrl+Wheel above any preview to zoom in and out the area they render.
+		if (mb->is_command_or_control_pressed()) {
+			const float base_factor = 1.1f;
+			if (mb->get_button_index() == ZN_GODOT_MouseButton_WHEEL_UP) {
+				set_preview_transform(_preview_offset, _preview_scale / base_factor);
+				// Prevent panning of GraphEdit
+				get_viewport()->set_input_as_handled();
+			}
+			if (mb->get_button_index() == ZN_GODOT_MouseButton_WHEEL_DOWN) {
+				set_preview_transform(_preview_offset, _preview_scale * base_factor);
+				// Prevent panning of GraphEdit
+				get_viewport()->set_input_as_handled();
+			}
+		}
+	}
+}
+
+void VoxelGraphEditor::set_preview_transform(Vector2f offset, float scale) {
+	if (offset != _preview_offset || scale != _preview_scale) {
+		_preview_offset = offset;
+		_preview_scale = scale;
+		// Update quickly
+		if (_time_before_preview_update <= 0.f) {
+			_time_before_preview_update = 0.1f;
+		}
+	}
 }
 
 Vector2 get_graph_offset_from_mouse(const GraphEdit *graph_edit, const Vector2 local_mouse_pos) {
@@ -861,7 +937,7 @@ void VoxelGraphEditor::_on_graph_edit_node_selected(Object *p_node_o) {
 void VoxelGraphEditor::_on_graph_edit_node_deselected(Node *p_node) {
 #elif defined(ZN_GODOT_EXTENSION)
 void VoxelGraphEditor::_on_graph_edit_node_deselected(Object *p_node_o) {
-	//Node *p_node = Object::cast_to<Node>(p_node_o);
+	// Node *p_node = Object::cast_to<Node>(p_node_o);
 #endif
 	// Just checking if nothing is selected _now_ is unreliable, because the user could have just selected another
 	// node, and I don't know when `GraphEdit` will update the `selected` flags in the current call stack.
@@ -902,7 +978,7 @@ void VoxelGraphEditor::update_previews(bool with_live_update) {
 
 	const uint64_t time_before = Time::get_singleton()->get_ticks_usec();
 
-	const VoxelGraphRuntime::CompilationResult result = _generator->compile(true);
+	const pg::CompilationResult result = _generator->compile(true);
 	if (!result.success) {
 		ERR_PRINT(String("Voxel graph compilation failed: {0}").format(varray(result.message)));
 
@@ -963,7 +1039,7 @@ void VoxelGraphEditor::update_range_analysis_previews() {
 	_generator->debug_analyze_range(
 			math::floor_to_int(aabb.position), math::floor_to_int(aabb.position + aabb.size), true);
 
-	const VoxelGraphRuntime::State &state = _generator->get_last_state_from_current_thread();
+	const pg::Runtime::State &state = _generator->get_last_state_from_current_thread();
 
 	const Color greyed_out_color(1, 1, 1, 0.5);
 
@@ -1030,8 +1106,7 @@ void VoxelGraphEditor::update_slice_previews() {
 	struct PreviewInfo {
 		VoxelGraphEditorNodePreview *control;
 		uint32_t address;
-		float min_value;
-		float value_scale;
+		uint32_t node_id;
 	};
 
 	std::vector<PreviewInfo> previews;
@@ -1056,9 +1131,7 @@ void VoxelGraphEditor::update_slice_previews() {
 			// Not part of the compiled result
 			continue;
 		}
-		info.min_value = _graph->get_node_param(dst.node_id, 0);
-		const float max_value = _graph->get_node_param(dst.node_id, 1);
-		info.value_scale = 1.f / (max_value - info.min_value);
+		info.node_id = dst.node_id;
 		previews.push_back(info);
 	}
 
@@ -1074,8 +1147,11 @@ void VoxelGraphEditor::update_slice_previews() {
 		y_vec.resize(buffer_size);
 		z_vec.resize(buffer_size);
 
-		const Vector3f min_pos(-preview_size_x / 2, -preview_size_y / 2, 0);
-		const Vector3f max_pos = min_pos + Vector3f(preview_size_x, preview_size_x, 0);
+		const float view_size_x = _preview_scale * float(preview_size_x);
+		const float view_size_y = _preview_scale * float(preview_size_x);
+		const Vector3f min_pos =
+				Vector3f(-view_size_x * 0.5f + _preview_offset.x, -view_size_y * 0.5f + _preview_offset.y, 0);
+		const Vector3f max_pos = min_pos + Vector3f(view_size_x, view_size_y, 0);
 
 		int i = 0;
 		for (int iy = 0; iy < preview_size_x; ++iy) {
@@ -1092,7 +1168,7 @@ void VoxelGraphEditor::update_slice_previews() {
 		Span<float> x_coords = to_span(x_vec);
 		Span<float> y_coords;
 		Span<float> z_coords;
-		if (_preview_axes == PREVIEW_XY) {
+		if (_preview_axes == PREVIEW_AXES_XY) {
 			y_coords = to_span(y_vec);
 			z_coords = to_span(z_vec);
 		} else {
@@ -1103,33 +1179,14 @@ void VoxelGraphEditor::update_slice_previews() {
 		_generator->generate_set(x_coords, y_coords, z_coords);
 	}
 
-	const VoxelGraphRuntime::State &last_state = VoxelGeneratorGraph::get_last_state_from_current_thread();
+	const pg::Runtime::State &last_state = VoxelGeneratorGraph::get_last_state_from_current_thread();
 
 	// Update previews
 	for (size_t preview_index = 0; preview_index < previews.size(); ++preview_index) {
 		PreviewInfo &info = previews[preview_index];
-
-		const VoxelGraphRuntime::Buffer &buffer = last_state.get_buffer(info.address);
-
-		Image &im = **info.control->get_image();
-		ERR_FAIL_COND(im.get_width() * im.get_height() != static_cast<int>(buffer.size));
-
-		// TODO Support debugging inputs
-		ERR_CONTINUE_MSG(buffer.data == nullptr,
-				buffer.is_binding ? "Plugging a debug view on an input is not supported yet."
-								  : "Didn't expect buffer to be null");
-
-		unsigned int i = 0;
-		for (int y = 0; y < im.get_height(); ++y) {
-			for (int x = 0; x < im.get_width(); ++x) {
-				const float v = buffer.data[i];
-				const float g = math::clamp((v - info.min_value) * info.value_scale, 0.f, 1.f);
-				im.set_pixel(x, im.get_height() - y - 1, Color(g, g, g));
-				++i;
-			}
-		}
-
-		info.control->update_texture();
+		const pg::Runtime::Buffer &buffer = last_state.get_buffer(info.address);
+		info.control->update_from_buffer(buffer);
+		info.control->update_display_settings(**_graph, info.node_id);
 	}
 }
 
@@ -1222,28 +1279,31 @@ void VoxelGraphEditor::profile() {
 	}
 }
 
+static void update_menu_radio_checkable_items(PopupMenu &menu, int checked_id) {
+	for (int i = 0; i < menu.get_item_count(); ++i) {
+		if (menu.is_item_radio_checkable(i)) {
+			const int item_id = menu.get_item_id(i);
+			menu.set_item_checked(i, item_id == checked_id);
+		}
+	}
+}
+
 void VoxelGraphEditor::update_preview_axes_menu() {
+	// Update menu state from current settings
 	ERR_FAIL_COND(_preview_axes_menu == nullptr);
 	ToolbarMenuIDs id;
 	switch (_preview_axes) {
-		case PREVIEW_XY:
+		case PREVIEW_AXES_XY:
 			id = MENU_PREVIEW_AXES_XY;
 			break;
-		case PREVIEW_XZ:
+		case PREVIEW_AXES_XZ:
 			id = MENU_PREVIEW_AXES_XZ;
 			break;
 		default:
 			ERR_PRINT("Unknown preview axes");
-			break;
+			return;
 	}
-	struct L {
-		static void set_menu_item_checked(PopupMenu &menu, int id, bool checked) {
-			const int index = menu.get_item_index(id);
-			menu.set_item_checked(index, checked);
-		}
-	};
-	L::set_menu_item_checked(*_preview_axes_menu, MENU_PREVIEW_AXES_XZ, MENU_PREVIEW_AXES_XZ == id);
-	L::set_menu_item_checked(*_preview_axes_menu, MENU_PREVIEW_AXES_XY, MENU_PREVIEW_AXES_XY == id);
+	update_menu_radio_checkable_items(*_preview_axes_menu, id);
 }
 
 void VoxelGraphEditor::hide_profiling_ratios() {
@@ -1382,30 +1442,24 @@ void VoxelGraphEditor::_bind_methods() {
 			D_METHOD("_on_graph_node_dragged", "from", "to", "id"), &VoxelGraphEditor::_on_graph_node_dragged);
 	ClassDB::bind_method(D_METHOD("_on_menu_id_pressed", "id"), &VoxelGraphEditor::_on_menu_id_pressed);
 	ClassDB::bind_method(D_METHOD("_on_context_menu_id_pressed", "id"), &VoxelGraphEditor::_on_context_menu_id_pressed);
-	ClassDB::bind_method(
-			D_METHOD("_on_update_previews_button_pressed"), &VoxelGraphEditor::_on_update_previews_button_pressed);
-	ClassDB::bind_method(D_METHOD("_on_profile_button_pressed"), &VoxelGraphEditor::_on_profile_button_pressed);
 	ClassDB::bind_method(D_METHOD("_on_graph_changed"), &VoxelGraphEditor::_on_graph_changed);
 	ClassDB::bind_method(
 			D_METHOD("_on_graph_node_name_changed", "node_id"), &VoxelGraphEditor::_on_graph_node_name_changed);
 	ClassDB::bind_method(
-			D_METHOD("_on_analyze_range_button_pressed"), &VoxelGraphEditor::_on_analyze_range_button_pressed);
-	ClassDB::bind_method(
 			D_METHOD("_on_range_analysis_toggled", "enabled"), &VoxelGraphEditor::_on_range_analysis_toggled);
 	ClassDB::bind_method(
 			D_METHOD("_on_range_analysis_area_changed"), &VoxelGraphEditor::_on_range_analysis_area_changed);
-	ClassDB::bind_method(
-			D_METHOD("_on_preview_axes_menu_id_pressed", "id"), &VoxelGraphEditor::_on_preview_axes_menu_id_pressed);
-	ClassDB::bind_method(
-			D_METHOD("_on_generate_shader_button_pressed"), &VoxelGraphEditor::_on_generate_shader_button_pressed);
-	ClassDB::bind_method(D_METHOD("_on_live_update_toggled", "enabled"), &VoxelGraphEditor::_on_live_update_toggled);
 	ClassDB::bind_method(D_METHOD("_on_popout_button_pressed"), &VoxelGraphEditor::_on_popout_button_pressed);
 	ClassDB::bind_method(D_METHOD("_on_function_file_dialog_file_selected", "fpath"),
 			&VoxelGraphEditor::_on_function_file_dialog_file_selected);
+#if ZN_GODOT
 	ClassDB::bind_method(D_METHOD("_on_function_quick_open_dialog_quick_open"),
 			&VoxelGraphEditor::_on_function_quick_open_dialog_quick_open);
+#endif
 	ClassDB::bind_method(
 			D_METHOD("_on_node_resize_request", "new_size", "node_id"), &VoxelGraphEditor::_on_node_resize_request);
+	ClassDB::bind_method(
+			D_METHOD("_on_graph_node_preview_gui_input", "event"), &VoxelGraphEditor::_on_graph_node_preview_gui_input);
 #endif
 
 	ClassDB::bind_method(D_METHOD("_check_nothing_selected"), &VoxelGraphEditor::_check_nothing_selected);

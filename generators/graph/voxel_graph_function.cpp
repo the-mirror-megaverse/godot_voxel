@@ -1,14 +1,16 @@
 #include "voxel_graph_function.h"
 #include "../../constants/voxel_string_names.h"
 #include "../../util/container_funcs.h"
+#include "../../util/godot/array.h" // for `varray` in GDExtension builds
 #include "../../util/godot/callable.h"
 #include "../../util/godot/funcs.h"
 #include "../../util/godot/object.h"
 #include "../../util/string_funcs.h"
-#include "voxel_graph_node_db.h"
+#include "node_type_db.h"
+
 #include <algorithm>
 
-namespace zylann::voxel {
+namespace zylann::voxel::pg {
 
 const char *VoxelGraphFunction::SIGNAL_NODE_NAME_CHANGED = "node_name_changed";
 
@@ -19,7 +21,7 @@ void VoxelGraphFunction::clear() {
 
 ProgramGraph::Node *create_node_internal(ProgramGraph &graph, VoxelGraphFunction::NodeTypeID type_id, Vector2 position,
 		uint32_t id, bool create_default_instances) {
-	const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(type_id);
+	const NodeType &type = NodeTypeDB::get_singleton().get_type(type_id);
 
 	ProgramGraph::Node *node = graph.create_node(type_id, id);
 	ERR_FAIL_COND_V(node == nullptr, nullptr);
@@ -30,7 +32,7 @@ ProgramGraph::Node *create_node_internal(ProgramGraph &graph, VoxelGraphFunction
 
 	node->params.resize(type.params.size());
 	for (size_t i = 0; i < type.params.size(); ++i) {
-		const VoxelGraphNodeDB::Param &param = type.params[i];
+		const NodeType::Param &param = type.params[i];
 
 		if (param.class_name.is_empty()) {
 			node->params[i] = param.default_value;
@@ -43,7 +45,7 @@ ProgramGraph::Node *create_node_internal(ProgramGraph &graph, VoxelGraphFunction
 	node->autoconnect_default_inputs = type.has_autoconnect_inputs();
 
 	for (size_t i = 0; i < type.inputs.size(); ++i) {
-		const VoxelGraphNodeDB::Port &port_spec = type.inputs[i];
+		const NodeType::Port &port_spec = type.inputs[i];
 		node->default_inputs[i] = port_spec.default_value;
 		node->inputs[i].autoconnect_hint = port_spec.auto_connect;
 	}
@@ -54,58 +56,23 @@ ProgramGraph::Node *create_node_internal(ProgramGraph &graph, VoxelGraphFunction
 // Automatically chooses inputs and outputs based on a graph.
 void auto_pick_input_and_outputs(const ProgramGraph &graph, std::vector<VoxelGraphFunction::Port> &inputs,
 		std::vector<VoxelGraphFunction::Port> &outputs) {
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 
 	struct L {
-		static void try_add_input(std::vector<VoxelGraphFunction::Port> &added_ports,
-				VoxelGraphFunction::NodeTypeID type_id, String name) {
+		static void try_add_port(
+				const VoxelGraphFunction::Port &port, std::vector<VoxelGraphFunction::Port> &added_ports) {
 			for (VoxelGraphFunction::Port &p : added_ports) {
-				if (p.type == type_id) {
+				if (p.equals(port)) {
 					// Already added
 					return;
 				}
 			}
-			added_ports.push_back(VoxelGraphFunction::Port());
-			VoxelGraphFunction::Port &port = added_ports.back();
-			port.name = name;
-			port.type = type_id;
+			added_ports.push_back(port);
 		}
 
-		static void try_add_port(const ProgramGraph::Node &node, std::vector<VoxelGraphFunction::Port> &added_ports,
-				VoxelGraphFunction::NodeTypeID custom_type, const VoxelGraphNodeDB::NodeType &type) {
-			String name;
-			if (node.type_id == custom_type) {
-				// Custom I/O
-				for (VoxelGraphFunction::Port &p : added_ports) {
-					if (p.name == node.name) {
-						// Already added
-						return;
-					}
-				}
-				name = node.name;
-
-			} else {
-				// Special I/O
-				for (VoxelGraphFunction::Port &p : added_ports) {
-					if (p.type == node.type_id) {
-						// Already added
-						return;
-					}
-				}
-				if (custom_type == VoxelGraphFunction::NODE_CUSTOM_INPUT) {
-					ZN_ASSERT(type.outputs.size() == 1);
-					name = type.outputs[0].name;
-				} else if (custom_type == VoxelGraphFunction::NODE_CUSTOM_OUTPUT) {
-					ZN_ASSERT(type.inputs.size() == 1);
-					name = type.inputs[0].name;
-				} else {
-					ZN_CRASH();
-				}
-			}
-			added_ports.push_back(VoxelGraphFunction::Port());
-			VoxelGraphFunction::Port &port = added_ports.back();
-			port.name = name;
-			port.type = VoxelGraphFunction::NodeTypeID(node.type_id);
+		static void try_add_port(const ProgramGraph::Node &node, const NodeType &type,
+				std::vector<VoxelGraphFunction::Port> &added_ports) {
+			try_add_port(make_port_from_io_node(node, type), added_ports);
 		}
 	};
 
@@ -121,7 +88,11 @@ void auto_pick_input_and_outputs(const ProgramGraph &graph, std::vector<VoxelGra
 			} else if (b.is_custom()) {
 				return true;
 			} else {
-				return a.type < b.type;
+				if (a.type == b.type) {
+					return a.sub_index < b.sub_index;
+				} else {
+					return a.type < b.type;
+				}
 			}
 		}
 	};
@@ -130,25 +101,26 @@ void auto_pick_input_and_outputs(const ProgramGraph &graph, std::vector<VoxelGra
 	outputs.clear();
 
 	graph.for_each_node_const([&type_db, &inputs, &outputs](const ProgramGraph::Node &node) {
-		const VoxelGraphNodeDB::NodeType &type = type_db.get_type(node.type_id);
+		const NodeType &type = type_db.get_type(node.type_id);
 
-		if (type.category == VoxelGraphNodeDB::CATEGORY_INPUT) {
-			L::try_add_port(node, inputs, VoxelGraphFunction::NODE_CUSTOM_INPUT, type);
+		if (type.category == CATEGORY_INPUT) {
+			L::try_add_port(node, type, inputs);
 
-		} else if (type.category == VoxelGraphNodeDB::CATEGORY_OUTPUT) {
-			L::try_add_port(node, outputs, VoxelGraphFunction::NODE_CUSTOM_OUTPUT, type);
+		} else if (type.category == CATEGORY_OUTPUT) {
+			L::try_add_port(node, type, outputs);
 
 		} else if (node.autoconnect_default_inputs) {
 			// The input node is implicit
-			for (const ProgramGraph::Port &port : node.inputs) {
+			for (const ProgramGraph::Port &input : node.inputs) {
 				VoxelGraphFunction::NodeTypeID input_type_id;
 				// If the input isn't connected and has an autoconnect hint
-				if (port.connections.size() == 0 &&
+				if (input.connections.size() == 0 &&
 						VoxelGraphFunction::try_get_node_type_id_from_auto_connect(
-								VoxelGraphFunction::AutoConnect(port.autoconnect_hint), input_type_id)) {
-					const VoxelGraphNodeDB::NodeType &input_type = type_db.get_type(input_type_id);
+								VoxelGraphFunction::AutoConnect(input.autoconnect_hint), input_type_id)) {
+					const NodeType &input_type = type_db.get_type(input_type_id);
 					ZN_ASSERT(input_type.outputs.size() == 1);
-					L::try_add_input(inputs, input_type_id, input_type.outputs[0].name);
+					const VoxelGraphFunction::Port port(input_type_id, input_type.outputs[0].name);
+					L::try_add_port(port, inputs);
 				}
 			}
 		}
@@ -272,7 +244,7 @@ void update_function(
 }
 
 uint32_t VoxelGraphFunction::create_node(NodeTypeID type_id, Vector2 position, uint32_t id) {
-	ERR_FAIL_COND_V(!VoxelGraphNodeDB::get_singleton().is_valid_type_id(type_id), ProgramGraph::NULL_ID);
+	ERR_FAIL_COND_V(!NodeTypeDB::get_singleton().is_valid_type_id(type_id), ProgramGraph::NULL_ID);
 	ProgramGraph::Node *node = create_node_internal(_graph, type_id, position, id, true);
 	ERR_FAIL_COND_V(node == nullptr, ProgramGraph::NULL_ID);
 	// Register resources if any were created by default
@@ -294,7 +266,7 @@ uint32_t VoxelGraphFunction::create_node(NodeTypeID type_id, Vector2 position, u
 					// ZN_ASSERT(node->params.size() >= 1);
 					// node->params[0] = input_index;
 					node.name = port.name;
-					//port.node_ids.push_back(node.id);
+					// port.node_ids.push_back(node.id);
 					break;
 				}
 			}
@@ -343,8 +315,8 @@ bool VoxelGraphFunction::can_connect(
 	ERR_FAIL_COND_V(!_graph.is_input_port_valid(dst_port), false);
 	const ProgramGraph::Node &node = _graph.get_node(src_node_id);
 	// Output nodes have output ports, for internal reasons. They should not be connected.
-	const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(node.type_id);
-	if (type.category == VoxelGraphNodeDB::CATEGORY_OUTPUT) {
+	const NodeType &type = NodeTypeDB::get_singleton().get_type(node.type_id);
+	if (type.category == CATEGORY_OUTPUT) {
 		return false;
 	}
 	return _graph.can_connect(src_port, dst_port);
@@ -357,8 +329,8 @@ bool VoxelGraphFunction::is_valid_connection(
 	ERR_FAIL_COND_V(!_graph.is_output_port_valid(src_port), false);
 	ERR_FAIL_COND_V(!_graph.is_input_port_valid(dst_port), false);
 	const ProgramGraph::Node &node = _graph.get_node(src_node_id);
-	const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(node.type_id);
-	if (type.category == VoxelGraphNodeDB::CATEGORY_OUTPUT) {
+	const NodeType &type = NodeTypeDB::get_singleton().get_type(node.type_id);
+	if (type.category == CATEGORY_OUTPUT) {
 		return false;
 	}
 	return _graph.is_valid_connection(src_port, dst_port);
@@ -371,8 +343,8 @@ void VoxelGraphFunction::add_connection(
 	ERR_FAIL_COND(!_graph.is_output_port_valid(src_port));
 	ERR_FAIL_COND(!_graph.is_input_port_valid(dst_port));
 	const ProgramGraph::Node &node = _graph.get_node(src_node_id);
-	const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(node.type_id);
-	ERR_FAIL_COND(type.category == VoxelGraphNodeDB::CATEGORY_OUTPUT);
+	const NodeType &type = NodeTypeDB::get_singleton().get_type(node.type_id);
+	ERR_FAIL_COND(type.category == CATEGORY_OUTPUT);
 	_graph.connect(src_port, dst_port);
 	emit_changed();
 }
@@ -417,7 +389,7 @@ void VoxelGraphFunction::set_node_name(uint32_t node_id, StringName name) {
 	if (name != StringName()) {
 		const uint32_t existing_node_id = _graph.find_node_by_name(name);
 		if (existing_node_id != ProgramGraph::NULL_ID && node_id == existing_node_id) {
-			ZN_PRINT_ERROR(format("More than one graph node has the name \"{}\"", GodotStringWrapper(String(name))));
+			ZN_PRINT_ERROR(format("More than one graph node has the name \"{}\"", String(name)));
 		}
 	}
 	node->name = name;
@@ -478,8 +450,7 @@ void VoxelGraphFunction::set_node_param(uint32_t node_id, uint32_t param_index, 
 }
 
 bool VoxelGraphFunction::get_expression_variables(std::string_view code, std::vector<std::string_view> &vars) {
-	Span<const ExpressionParser::Function> functions =
-			VoxelGraphNodeDB::get_singleton().get_expression_parser_functions();
+	Span<const ExpressionParser::Function> functions = NodeTypeDB::get_singleton().get_expression_parser_functions();
 	ExpressionParser::Result result = ExpressionParser::parse(code, functions);
 	if (result.error.id == ExpressionParser::ERROR_NONE) {
 		if (result.root != nullptr) {
@@ -553,7 +524,7 @@ void VoxelGraphFunction::set_node_default_input(uint32_t node_id, uint32_t input
 	ERR_FAIL_INDEX(input_index, node->default_inputs.size());
 	Variant &defval = node->default_inputs[input_index];
 	if (defval != value) {
-		//node->autoconnect_default_inputs = false;
+		// node->autoconnect_default_inputs = false;
 		defval = value;
 		emit_changed();
 	}
@@ -630,13 +601,13 @@ unsigned int VoxelGraphFunction::get_nodes_count() const {
 void VoxelGraphFunction::get_configuration_warnings(PackedStringArray &out_warnings) const {}
 
 uint64_t VoxelGraphFunction::get_output_graph_hash() const {
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 	std::vector<uint32_t> terminal_nodes;
 
 	// Not using the generic `get_terminal_nodes` function because our terminal nodes do have outputs
 	_graph.for_each_node_const([&terminal_nodes, &type_db](const ProgramGraph::Node &node) {
-		const VoxelGraphNodeDB::NodeType &type = type_db.get_type(node.type_id);
-		if (type.category == VoxelGraphNodeDB::CATEGORY_OUTPUT) {
+		const NodeType &type = type_db.get_type(node.type_id);
+		if (type.category == CATEGORY_OUTPUT) {
 			terminal_nodes.push_back(node.id);
 		}
 	});
@@ -694,13 +665,13 @@ const ProgramGraph &VoxelGraphFunction::get_graph() const {
 }
 
 void VoxelGraphFunction::register_subresource(Resource &resource) {
-	//print_line(String("{0}: Registering subresource {1}").format(varray(int64_t(this), int64_t(&resource))));
+	// print_line(String("{0}: Registering subresource {1}").format(varray(int64_t(this), int64_t(&resource))));
 	resource.connect(VoxelStringNames::get_singleton().changed,
 			ZN_GODOT_CALLABLE_MP(this, VoxelGraphFunction, _on_subresource_changed));
 }
 
 void VoxelGraphFunction::unregister_subresource(Resource &resource) {
-	//print_line(String("{0}: Unregistering subresource {1}").format(varray(int64_t(this), int64_t(&resource))));
+	// print_line(String("{0}: Unregistering subresource {1}").format(varray(int64_t(this), int64_t(&resource))));
 	resource.disconnect(VoxelStringNames::get_singleton().changed,
 			ZN_GODOT_CALLABLE_MP(this, VoxelGraphFunction, _on_subresource_changed));
 }
@@ -774,7 +745,7 @@ static Dictionary get_graph_as_variant_data(const ProgramGraph &graph) {
 
 		Dictionary node_data;
 
-		const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(node->type_id);
+		const NodeType &type = NodeTypeDB::get_singleton().get_type(node->type_id);
 		node_data["type"] = type.name;
 		node_data["gui_position"] = node->gui_position;
 		if (node->gui_size != Vector2()) {
@@ -787,7 +758,7 @@ static Dictionary get_graph_as_variant_data(const ProgramGraph &graph) {
 
 		// Parameters
 		for (size_t j = 0; j < type.params.size(); ++j) {
-			const VoxelGraphNodeDB::Param &param = type.params[j];
+			const NodeType::Param &param = type.params[j];
 			node_data[param.name] = node->params[j];
 		}
 
@@ -798,7 +769,7 @@ static Dictionary get_graph_as_variant_data(const ProgramGraph &graph) {
 		// Static default inputs
 		for (size_t j = 0; j < type.inputs.size(); ++j) {
 			if (node->inputs[j].connections.size() == 0) {
-				const VoxelGraphNodeDB::Port &port = type.inputs[j];
+				const NodeType::Port &port = type.inputs[j];
 				node_data[port.name] = node->default_inputs[j];
 			}
 		}
@@ -861,7 +832,7 @@ static Dictionary get_graph_as_variant_data(const ProgramGraph &graph) {
 }
 
 Dictionary VoxelGraphFunction::get_graph_as_variant_data() const {
-	return zylann::voxel::get_graph_as_variant_data(_graph);
+	return zylann::voxel::pg::get_graph_as_variant_data(_graph);
 }
 
 static bool var_to_id(Variant v, uint32_t &out_id, uint32_t min = 0) {
@@ -875,7 +846,7 @@ static bool var_to_id(Variant v, uint32_t &out_id, uint32_t min = 0) {
 static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data) {
 	Dictionary nodes_data = data["nodes"];
 	Array connections_data = data["connections"];
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 
 	// Can't iterate using `next()`, because in GDExtension, there doesn't seem to be a way to do so.
 	const Array nodes_data_keys = nodes_data.keys();
@@ -903,7 +874,7 @@ static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data) {
 		node->gui_size = node_data.get("gui_size", Vector2());
 
 		if (type_id == VoxelGraphFunction::NODE_FUNCTION) {
-			const VoxelGraphNodeDB::NodeType &ntype = type_db.get_type(type_id);
+			const NodeType &ntype = type_db.get_type(type_id);
 			ZN_ASSERT(ntype.params.size() >= 1);
 			// The function reference is always the first parameter
 			const String func_key = ntype.params[0].name;
@@ -999,7 +970,7 @@ static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data) {
 bool VoxelGraphFunction::load_graph_from_variant_data(Dictionary data) {
 	clear();
 
-	if (zylann::voxel::load_graph_from_variant_data(_graph, data)) {
+	if (zylann::voxel::pg::load_graph_from_variant_data(_graph, data)) {
 		register_subresources();
 		return true;
 
@@ -1034,7 +1005,7 @@ void VoxelGraphFunction::get_node_input_info(
 
 		} else {
 			if (port.dynamic_name.empty()) {
-				const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(node.type_id);
+				const NodeType &type = NodeTypeDB::get_singleton().get_type(node.type_id);
 				ZN_ASSERT(input_index < type.inputs.size());
 				*out_name = type.inputs[input_index].name;
 			} else {
@@ -1071,7 +1042,7 @@ String VoxelGraphFunction::get_node_output_name(uint32_t node_id, unsigned int o
 
 	} else {
 		if (port.dynamic_name.empty()) {
-			const VoxelGraphNodeDB::NodeType &type = VoxelGraphNodeDB::get_singleton().get_type(node.type_id);
+			const NodeType &type = NodeTypeDB::get_singleton().get_type(node.type_id);
 			ZN_ASSERT(output_index < type.outputs.size());
 			return type.outputs[output_index].name;
 		} else {
@@ -1129,19 +1100,19 @@ bool VoxelGraphFunction::try_get_auto_connect_from_node_type_id(NodeTypeID node_
 	}
 }
 
-Span<const VoxelGraphFunction::Port> VoxelGraphFunction::get_input_definitions() {
+Span<const VoxelGraphFunction::Port> VoxelGraphFunction::get_input_definitions() const {
 	return to_span(_inputs);
 }
 
-Span<const VoxelGraphFunction::Port> VoxelGraphFunction::get_output_definitions() {
+Span<const VoxelGraphFunction::Port> VoxelGraphFunction::get_output_definitions() const {
 	return to_span(_outputs);
 }
 
-bool validate_io_definitions(Span<const VoxelGraphFunction::Port> ports, const VoxelGraphNodeDB::Category category) {
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+bool validate_io_definitions(Span<const VoxelGraphFunction::Port> ports, const Category category) {
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 	for (unsigned int i = 0; i < ports.size(); ++i) {
 		const VoxelGraphFunction::Port &port = ports[i];
-		const VoxelGraphNodeDB::NodeType &type = type_db.get_type(port.type);
+		const NodeType &type = type_db.get_type(port.type);
 		if (type.category != category) {
 			return false;
 		}
@@ -1157,8 +1128,8 @@ bool validate_io_definitions(Span<const VoxelGraphFunction::Port> ports, const V
 }
 
 void VoxelGraphFunction::set_io_definitions(Span<const Port> inputs, Span<const Port> outputs) {
-	ERR_FAIL_COND(!validate_io_definitions(inputs, VoxelGraphNodeDB::CATEGORY_INPUT));
-	ERR_FAIL_COND(!validate_io_definitions(outputs, VoxelGraphNodeDB::CATEGORY_OUTPUT));
+	ERR_FAIL_COND(!validate_io_definitions(inputs, CATEGORY_INPUT));
+	ERR_FAIL_COND(!validate_io_definitions(outputs, CATEGORY_OUTPUT));
 	_inputs.clear();
 	for (const Port &input : inputs) {
 		_inputs.push_back(input);
@@ -1202,7 +1173,7 @@ bool VoxelGraphFunction::contains_reference_to_function(const VoxelGraphFunction
 }
 
 void VoxelGraphFunction::auto_pick_inputs_and_outputs() {
-	zylann::voxel::auto_pick_input_and_outputs(_graph, _inputs, _outputs);
+	zylann::voxel::pg::auto_pick_input_and_outputs(_graph, _inputs, _outputs);
 }
 
 bool find_port_by_name(Span<const VoxelGraphFunction::Port> ports, const String &name, unsigned int &out_index) {
@@ -1236,7 +1207,7 @@ bool VoxelGraphFunction::get_node_input_index_by_name(
 			}
 		}
 
-		const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+		const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 		return type_db.try_get_input_index_from_name(node.type_id, name, out_input_index);
 	}
 
@@ -1246,7 +1217,7 @@ bool VoxelGraphFunction::get_node_input_index_by_name(
 bool VoxelGraphFunction::get_node_param_index_by_name(
 		uint32_t node_id, String name, unsigned int &out_param_index) const {
 	const ProgramGraph::Node &node = _graph.get_node(node_id);
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 	return type_db.try_get_param_index_from_name(node.type_id, name, out_param_index);
 }
 
@@ -1262,12 +1233,12 @@ void VoxelGraphFunction::update_function_nodes(std::vector<ProgramGraph::Connect
 // Binding land
 
 int VoxelGraphFunction::_b_get_node_type_count() const {
-	return VoxelGraphNodeDB::get_singleton().get_type_count();
+	return NodeTypeDB::get_singleton().get_type_count();
 }
 
 Dictionary VoxelGraphFunction::_b_get_node_type_info(int type_id) const {
-	ERR_FAIL_COND_V(!VoxelGraphNodeDB::get_singleton().is_valid_type_id(type_id), Dictionary());
-	return VoxelGraphNodeDB::get_singleton().get_type_info_dict(type_id);
+	ERR_FAIL_COND_V(!NodeTypeDB::get_singleton().is_valid_type_id(type_id), Dictionary());
+	return NodeTypeDB::get_singleton().get_type_info_dict(type_id);
 }
 
 Array VoxelGraphFunction::_b_get_connections() const {
@@ -1300,38 +1271,45 @@ void VoxelGraphFunction::_b_set_node_name(int node_id, String name) {
 PackedInt32Array to_godot_int32_array(const std::vector<uint32_t> &vec) {
 	PackedInt32Array a;
 	a.resize(vec.size());
+	// Using pointer access because in GDExtension builds writing into a packed array has different syntax
+	int32_t *p = a.ptrw();
 	for (unsigned int i = 0; i < vec.size(); ++i) {
-		a.write[i] = vec[i];
+		p[i] = vec[i];
 	}
 	return a;
 }
 
 Array serialize_io_definitions(Span<const VoxelGraphFunction::Port> ports) {
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 	Array data;
 	data.resize(ports.size());
 	for (unsigned int i = 0; i < ports.size(); ++i) {
 		const VoxelGraphFunction::Port &port = ports[i];
 		Array port_data;
-		port_data.resize(2);
+		port_data.resize(3);
 
+		// Name
 		port_data[0] = port.name;
 
-		const VoxelGraphNodeDB::NodeType &ntype = type_db.get_type(port.type);
+		// Type as a string
+		const NodeType &ntype = type_db.get_type(port.type);
 		port_data[1] = ntype.name;
+
+		// Sub-index
+		port_data[2] = port.sub_index;
 
 		data[i] = port_data;
 	}
 	return data;
 }
 
-void deserialize_io_definitions(
-		std::vector<VoxelGraphFunction::Port> &ports, Array data, VoxelGraphNodeDB::Category expected_category) {
-	const VoxelGraphNodeDB &type_db = VoxelGraphNodeDB::get_singleton();
+void deserialize_io_definitions(std::vector<VoxelGraphFunction::Port> &ports, Array data, Category expected_category) {
+	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
 	ports.clear();
 	for (int i = 0; i < data.size(); ++i) {
 		Array port_data = data[i];
-		ERR_FAIL_COND(port_data.size() != 2);
+
+		ERR_FAIL_COND(port_data.size() < 2 || port_data.size() > 3);
 
 		VoxelGraphFunction::Port port;
 
@@ -1340,9 +1318,13 @@ void deserialize_io_definitions(
 		String type_name = port_data[1];
 		VoxelGraphFunction::NodeTypeID type_id;
 		ERR_FAIL_COND(!type_db.try_get_type_id_from_name(type_name, type_id));
-		const VoxelGraphNodeDB::NodeType &ntype = type_db.get_type(type_id);
+		const NodeType &ntype = type_db.get_type(type_id);
 		ERR_FAIL_COND(ntype.category != expected_category);
 		port.type = type_id;
+
+		if (port_data.size() >= 3) {
+			port.sub_index = port_data[2];
+		}
 
 		ports.push_back(port);
 
@@ -1364,7 +1346,7 @@ Array VoxelGraphFunction::_b_get_input_definitions() const {
 }
 
 void VoxelGraphFunction::_b_set_input_definitions(Array data) {
-	deserialize_io_definitions(_inputs, data, VoxelGraphNodeDB::CATEGORY_INPUT);
+	deserialize_io_definitions(_inputs, data, CATEGORY_INPUT);
 #ifdef TOOLS_ENABLED
 	notify_property_list_changed();
 #endif
@@ -1375,7 +1357,7 @@ Array VoxelGraphFunction::_b_get_output_definitions() const {
 }
 
 void VoxelGraphFunction::_b_set_output_definitions(Array data) {
-	deserialize_io_definitions(_outputs, data, VoxelGraphNodeDB::CATEGORY_OUTPUT);
+	deserialize_io_definitions(_outputs, data, CATEGORY_OUTPUT);
 #ifdef TOOLS_ENABLED
 	notify_property_list_changed();
 #endif
@@ -1510,4 +1492,4 @@ void VoxelGraphFunction::_bind_methods() {
 	BIND_ENUM_CONSTANT(NODE_TYPE_COUNT);
 }
 
-} // namespace zylann::voxel
+} // namespace zylann::voxel::pg

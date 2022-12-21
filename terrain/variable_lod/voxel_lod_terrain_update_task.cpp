@@ -193,8 +193,8 @@ static void process_unload_mesh_blocks_sliding_box(VoxelLodTerrainUpdateData::St
 			RWLockWrite wlock(lod.mesh_map_state.map_lock);
 			prev_box.difference(new_box, [&lod](Box3i out_of_range_box) {
 				out_of_range_box.for_each_cell([&lod](Vector3i pos) {
-					//print_line(String("Immerge {0}").format(varray(pos.to_vec3())));
-					//unload_mesh_block(pos, lod_index);
+					// print_line(String("Immerge {0}").format(varray(pos.to_vec3())));
+					// unload_mesh_block(pos, lod_index);
 					lod.mesh_map_state.map.erase(pos);
 					lod.mesh_blocks_to_unload.push_back(pos);
 				});
@@ -337,7 +337,7 @@ bool check_block_mesh_updated(VoxelLodTerrainUpdateData::State &state, const Vox
 		VoxelLodTerrainUpdateData::MeshBlockState &mesh_block, Vector3i mesh_block_pos, uint8_t lod_index,
 		std::vector<VoxelLodTerrainUpdateData::BlockLocation> &blocks_to_load,
 		const VoxelLodTerrainUpdateData::Settings &settings) {
-	//ZN_PROFILE_SCOPE();
+	// ZN_PROFILE_SCOPE();
 
 	VoxelLodTerrainUpdateData::Lod &lod = state.lods[lod_index];
 
@@ -461,6 +461,7 @@ static bool check_block_loaded_and_meshed(VoxelLodTerrainUpdateData::State &stat
 
 		if (tls_missing.size() > 0) {
 			VoxelLodTerrainUpdateData::Lod &lod = state.lods[lod_index];
+			MutexLock mlock(lod.loading_blocks_mutex);
 			for (const Vector3i &missing_bpos : tls_missing) {
 				if (!lod.has_loading_block(missing_bpos)) {
 					blocks_to_load.push_back({ missing_bpos, lod_index });
@@ -630,7 +631,7 @@ static void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 				CRASH_COND(mesh_block_it == lod.mesh_map_state.map.end());
 				CRASH_COND(mesh_block_it->second.state != VoxelLodTerrainUpdateData::MESH_UP_TO_DATE);
 
-				//self->set_mesh_block_active(*block, true);
+				// self->set_mesh_block_active(*block, true);
 				lod.mesh_blocks_to_activate.push_back(bpos);
 				mesh_block_it->second.active = true;
 				lods_to_update_transitions |= (0b111 << lod_index);
@@ -642,7 +643,7 @@ static void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 				auto mesh_block_it = lod.mesh_map_state.map.find(bpos);
 
 				if (mesh_block_it != lod.mesh_map_state.map.end()) {
-					//self->set_mesh_block_active(*block, false);
+					// self->set_mesh_block_active(*block, false);
 					mesh_block_it->second.active = false;
 					lod.mesh_blocks_to_deactivate.push_back(bpos);
 					lods_to_update_transitions |= (0b111 << lod_index);
@@ -660,7 +661,7 @@ static void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 				// Otherwise, there must always be a visible parent in the end, unless the octree vanished.
 				if (mesh_block_it != lod.mesh_map_state.map.end() &&
 						mesh_block_it->second.state == VoxelLodTerrainUpdateData::MESH_UP_TO_DATE) {
-					//self->set_mesh_block_active(*block, true);
+					// self->set_mesh_block_active(*block, true);
 					mesh_block_it->second.active = true;
 					lod.mesh_blocks_to_activate.push_back(bpos);
 					lods_to_update_transitions |= (0b111 << lod_index);
@@ -845,7 +846,7 @@ static void init_sparse_octree_priority_dependency(PriorityDependency &dep, Vect
 }
 
 // This is only if we want to cache voxel data
-static void request_block_generate(uint32_t volume_id, unsigned int data_block_size,
+static void request_block_generate(VolumeID volume_id, unsigned int data_block_size,
 		std::shared_ptr<StreamingDependency> &stream_dependency, const std::shared_ptr<VoxelData> &data,
 		Vector3i block_pos, int lod, std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data,
 		const Transform3D &volume_transform, float lod_distance, std::shared_ptr<AsyncDependencyTracker> tracker,
@@ -874,7 +875,7 @@ static void request_block_generate(uint32_t volume_id, unsigned int data_block_s
 }
 
 // Used only when streaming block by block
-static void request_block_load(uint32_t volume_id, unsigned int data_block_size,
+static void request_block_load(VolumeID volume_id, unsigned int data_block_size,
 		std::shared_ptr<StreamingDependency> &stream_dependency, const std::shared_ptr<VoxelData> &data,
 		Vector3i block_pos, int lod, bool request_instances,
 		std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data, const Transform3D &volume_transform,
@@ -903,7 +904,7 @@ static void request_block_load(uint32_t volume_id, unsigned int data_block_size,
 	}
 }
 
-static void send_block_data_requests(uint32_t volume_id,
+static void send_block_data_requests(VolumeID volume_id,
 		Span<const VoxelLodTerrainUpdateData::BlockLocation> blocks_to_load,
 		std::shared_ptr<StreamingDependency> &stream_dependency, const std::shared_ptr<VoxelData> &data,
 		std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data, unsigned int data_block_size,
@@ -933,7 +934,7 @@ static void apply_block_data_requests_as_empty(Span<const VoxelLodTerrainUpdateD
 	}
 }
 
-static void request_voxel_block_save(uint32_t volume_id, std::shared_ptr<VoxelBufferInternal> &voxels,
+static void request_voxel_block_save(VolumeID volume_id, std::shared_ptr<VoxelBufferInternal> &voxels,
 		Vector3i block_pos, int lod, std::shared_ptr<StreamingDependency> &stream_dependency,
 		unsigned int data_block_size, BufferedTaskScheduler &task_scheduler) {
 	//
@@ -948,7 +949,7 @@ static void request_voxel_block_save(uint32_t volume_id, std::shared_ptr<VoxelBu
 	task_scheduler.push_io_task(task);
 }
 
-void VoxelLodTerrainUpdateTask::send_block_save_requests(uint32_t volume_id,
+void VoxelLodTerrainUpdateTask::send_block_save_requests(VolumeID volume_id,
 		Span<VoxelData::BlockToSave> blocks_to_save, std::shared_ptr<StreamingDependency> &stream_dependency,
 		unsigned int data_block_size, BufferedTaskScheduler &task_scheduler) {
 	for (unsigned int i = 0; i < blocks_to_save.size(); ++i) {
@@ -959,7 +960,7 @@ void VoxelLodTerrainUpdateTask::send_block_save_requests(uint32_t volume_id,
 	}
 }
 
-static void send_mesh_requests(uint32_t volume_id, VoxelLodTerrainUpdateData::State &state,
+static void send_mesh_requests(VolumeID volume_id, VoxelLodTerrainUpdateData::State &state,
 		const VoxelLodTerrainUpdateData::Settings &settings, const std::shared_ptr<VoxelData> &data_ptr,
 		std::shared_ptr<MeshingDependency> meshing_dependency,
 		std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data, const Transform3D &volume_transform,
@@ -1006,6 +1007,10 @@ static void send_mesh_requests(uint32_t volume_id, VoxelLodTerrainUpdateData::St
 			task->data = data_ptr;
 			task->collision_hint = settings.collision_enabled;
 			task->virtual_texture_settings = settings.virtual_texture_settings;
+			task->virtual_texture_generator_override = settings.virtual_texture_generator_override;
+			task->virtual_texture_generator_override_begin_lod_index =
+					settings.virtual_texture_generator_override_begin_lod_index;
+			task->virtual_texture_use_gpu = settings.virtual_textures_use_gpu;
 
 			// Don't update a virtual texture if one update is already processing
 			if (settings.virtual_texture_settings.enabled &&
@@ -1045,7 +1050,7 @@ static void send_mesh_requests(uint32_t volume_id, VoxelLodTerrainUpdateData::St
 // The returned tracker may be polled to detect when it is complete.
 static std::shared_ptr<AsyncDependencyTracker> preload_boxes_async(VoxelLodTerrainUpdateData::State &state,
 		const VoxelLodTerrainUpdateData::Settings &settings, const std::shared_ptr<VoxelData> data_ptr,
-		Span<const Box3i> voxel_boxes, Span<IThreadedTask *> next_tasks, uint32_t volume_id,
+		Span<const Box3i> voxel_boxes, Span<IThreadedTask *> next_tasks, VolumeID volume_id,
 		std::shared_ptr<StreamingDependency> &stream_dependency,
 		std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data, const Transform3D &volume_transform,
 		BufferedTaskScheduler &task_scheduler) {
@@ -1082,10 +1087,13 @@ static std::shared_ptr<AsyncDependencyTracker> preload_boxes_async(VoxelLodTerra
 			tls_missing.clear();
 			data.get_missing_blocks(block_box, lod_index, tls_missing);
 
-			for (const Vector3i &missing_bpos : tls_missing) {
-				if (!lod.has_loading_block(missing_bpos)) {
-					todo.push_back(TaskArguments{ missing_bpos, lod_index });
-					lod.loading_blocks.insert(missing_bpos);
+			if (tls_missing.size() > 0) {
+				MutexLock mlock(lod.loading_blocks_mutex);
+				for (const Vector3i &missing_bpos : tls_missing) {
+					if (!lod.has_loading_block(missing_bpos)) {
+						todo.push_back(TaskArguments{ missing_bpos, lod_index });
+						lod.loading_blocks.insert(missing_bpos);
+					}
 				}
 			}
 		}
@@ -1126,7 +1134,7 @@ static std::shared_ptr<AsyncDependencyTracker> preload_boxes_async(VoxelLodTerra
 }
 
 static void process_async_edits(VoxelLodTerrainUpdateData::State &state,
-		const VoxelLodTerrainUpdateData::Settings &settings, const std::shared_ptr<VoxelData> &data, uint32_t volume_id,
+		const VoxelLodTerrainUpdateData::Settings &settings, const std::shared_ptr<VoxelData> &data, VolumeID volume_id,
 		std::shared_ptr<StreamingDependency> &stream_dependency,
 		std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data, const Transform3D &volume_transform,
 		BufferedTaskScheduler &task_scheduler) {

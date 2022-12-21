@@ -1,5 +1,9 @@
 #include "voxel_engine.h"
 #include "../constants/voxel_constants.h"
+#include "../shaders/shaders.h"
+#include "../util/godot/rd_sampler_state.h"
+#include "../util/godot/rendering_device.h"
+#include "../util/godot/rendering_server.h"
 #include "../util/log.h"
 #include "../util/macros.h"
 #include "../util/profiling.h"
@@ -22,6 +26,8 @@ VoxelEngine &VoxelEngine::get_singleton() {
 void VoxelEngine::create_singleton(ThreadsConfig threads_config) {
 	ZN_ASSERT_MSG(g_voxel_engine == nullptr, "Creating singleton twice");
 	g_voxel_engine = ZN_NEW(VoxelEngine(threads_config));
+	// Do separately because it involves accessing `g_voxel_engine`
+	g_voxel_engine->load_shaders();
 }
 
 void VoxelEngine::destroy_singleton() {
@@ -63,6 +69,45 @@ VoxelEngine::VoxelEngine(ThreadsConfig threads_config) {
 	ZN_PRINT_VERBOSE(format("Size of LoadBlockDataTask: {}", sizeof(LoadBlockDataTask)));
 	ZN_PRINT_VERBOSE(format("Size of SaveBlockDataTask: {}", sizeof(SaveBlockDataTask)));
 	ZN_PRINT_VERBOSE(format("Size of MeshBlockTask: {}", sizeof(MeshBlockTask)));
+
+	_rendering_device = RenderingServer::get_singleton()->create_local_rendering_device();
+
+	if (_rendering_device != nullptr) {
+		Ref<RDSamplerState> sampler_state;
+		sampler_state.instantiate();
+		// Using samplers for their interpolation features.
+		// Otherwise I dont feel like there is a point in using one IMO
+		sampler_state->set_mag_filter(RenderingDevice::SAMPLER_FILTER_LINEAR);
+		sampler_state->set_min_filter(RenderingDevice::SAMPLER_FILTER_LINEAR);
+		_filtering_sampler_rid = sampler_create(*_rendering_device, **sampler_state);
+
+		_gpu_storage_buffer_pool.set_rendering_device(_rendering_device);
+
+		_gpu_task_runner.start(_rendering_device, &_gpu_storage_buffer_pool);
+
+	} else {
+		ZN_PRINT_VERBOSE("Could not create local RenderingDevice, GPU functionality won't be supported.");
+	}
+}
+
+void VoxelEngine::load_shaders() {
+	ZN_PROFILE_SCOPE();
+
+	if (_rendering_device != nullptr) {
+		ZN_PRINT_VERBOSE("Loading VoxelEngine shaders");
+
+		_dilate_normalmap_shader.load_from_glsl(g_dilate_normalmap_shader, "zylann.voxel.dilate_normalmap");
+		_detail_gather_hits_shader.load_from_glsl(g_detail_gather_hits_shader, "zylann.voxel.detail_gather_hits");
+		_detail_normalmap_shader.load_from_glsl(g_detail_normalmap_shader, "zylann.voxel.detail_normalmap_shader");
+
+		_detail_modifier_sphere_shader.load_from_glsl(String(g_detail_modifier_shader_template_0) +
+						String(g_modifier_sphere_shader_snippet) + String(g_detail_modifier_shader_template_1),
+				"zylann.voxel.detail_modifier_sphere_shader");
+
+		_detail_modifier_mesh_shader.load_from_glsl(String(g_detail_modifier_shader_template_0) +
+						String(g_modifier_mesh_shader_snippet) + String(g_detail_modifier_shader_template_1),
+				"zylann.voxel.detail_modifier_mesh_shader");
+	}
 }
 
 VoxelEngine::~VoxelEngine() {
@@ -72,6 +117,30 @@ VoxelEngine::~VoxelEngine() {
 	// but doing it anyways for correctness, it's how it should have been...
 	// See https://github.com/Zylann/godot_voxel/issues/189
 	wait_and_clear_all_tasks(true);
+
+	_gpu_task_runner.stop();
+
+	if (_rendering_device != nullptr) {
+		// Free these explicitely because we are going to free the RenderindDevice too
+		_dilate_normalmap_shader.clear();
+		_detail_gather_hits_shader.clear();
+		_detail_normalmap_shader.clear();
+		_detail_modifier_sphere_shader.clear();
+		_detail_modifier_mesh_shader.clear();
+
+		free_rendering_device_rid(*_rendering_device, _filtering_sampler_rid);
+		_filtering_sampler_rid = RID();
+
+		if (is_verbose_output_enabled()) {
+			_gpu_storage_buffer_pool.debug_print();
+		}
+
+		_gpu_storage_buffer_pool.clear();
+		_gpu_storage_buffer_pool.set_rendering_device(nullptr);
+
+		memdelete(_rendering_device);
+		_rendering_device = nullptr;
+	}
 }
 
 void VoxelEngine::wait_and_clear_all_tasks(bool warn) {
@@ -86,20 +155,20 @@ void VoxelEngine::wait_and_clear_all_tasks(bool warn) {
 	});
 }
 
-uint32_t VoxelEngine::add_volume(VolumeCallbacks callbacks) {
+VolumeID VoxelEngine::add_volume(VolumeCallbacks callbacks) {
 	ZN_ASSERT(callbacks.check_callbacks());
 	Volume volume;
 	volume.callbacks = callbacks;
-	return _world.volumes.create(volume);
+	return _world.volumes.add(volume);
 }
 
-VoxelEngine::VolumeCallbacks VoxelEngine::get_volume_callbacks(uint32_t volume_id) const {
+VoxelEngine::VolumeCallbacks VoxelEngine::get_volume_callbacks(VolumeID volume_id) const {
 	const Volume &volume = _world.volumes.get(volume_id);
 	return volume.callbacks;
 }
 
-void VoxelEngine::remove_volume(uint32_t volume_id) {
-	_world.volumes.destroy(volume_id);
+void VoxelEngine::remove_volume(VolumeID volume_id) {
+	_world.volumes.remove(volume_id);
 	// TODO How to cancel meshing tasks?
 
 	if (_world.volumes.count() == 0) {
@@ -109,75 +178,75 @@ void VoxelEngine::remove_volume(uint32_t volume_id) {
 	}
 }
 
-bool VoxelEngine::is_volume_valid(uint32_t volume_id) const {
-	return _world.volumes.is_valid(volume_id);
+bool VoxelEngine::is_volume_valid(VolumeID volume_id) const {
+	return _world.volumes.exists(volume_id);
 }
 
-uint32_t VoxelEngine::add_viewer() {
-	return _world.viewers.create(Viewer());
+ViewerID VoxelEngine::add_viewer() {
+	return _world.viewers.add(Viewer());
 }
 
-void VoxelEngine::remove_viewer(uint32_t viewer_id) {
-	_world.viewers.destroy(viewer_id);
+void VoxelEngine::remove_viewer(ViewerID viewer_id) {
+	_world.viewers.remove(viewer_id);
 }
 
-void VoxelEngine::set_viewer_position(uint32_t viewer_id, Vector3 position) {
+void VoxelEngine::set_viewer_position(ViewerID viewer_id, Vector3 position) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.world_position = position;
 }
 
-void VoxelEngine::set_viewer_distance(uint32_t viewer_id, unsigned int distance) {
+void VoxelEngine::set_viewer_distance(ViewerID viewer_id, unsigned int distance) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.view_distance = distance;
 }
 
-unsigned int VoxelEngine::get_viewer_distance(uint32_t viewer_id) const {
+unsigned int VoxelEngine::get_viewer_distance(ViewerID viewer_id) const {
 	const Viewer &viewer = _world.viewers.get(viewer_id);
 	return viewer.view_distance;
 }
 
-void VoxelEngine::set_viewer_requires_visuals(uint32_t viewer_id, bool enabled) {
+void VoxelEngine::set_viewer_requires_visuals(ViewerID viewer_id, bool enabled) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.require_visuals = enabled;
 }
 
-bool VoxelEngine::is_viewer_requiring_visuals(uint32_t viewer_id) const {
+bool VoxelEngine::is_viewer_requiring_visuals(ViewerID viewer_id) const {
 	const Viewer &viewer = _world.viewers.get(viewer_id);
 	return viewer.require_visuals;
 }
 
-void VoxelEngine::set_viewer_requires_collisions(uint32_t viewer_id, bool enabled) {
+void VoxelEngine::set_viewer_requires_collisions(ViewerID viewer_id, bool enabled) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.require_collisions = enabled;
 }
 
-bool VoxelEngine::is_viewer_requiring_collisions(uint32_t viewer_id) const {
+bool VoxelEngine::is_viewer_requiring_collisions(ViewerID viewer_id) const {
 	const Viewer &viewer = _world.viewers.get(viewer_id);
 	return viewer.require_collisions;
 }
 
-void VoxelEngine::set_viewer_requires_data_block_notifications(uint32_t viewer_id, bool enabled) {
+void VoxelEngine::set_viewer_requires_data_block_notifications(ViewerID viewer_id, bool enabled) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.requires_data_block_notifications = enabled;
 }
 
-bool VoxelEngine::is_viewer_requiring_data_block_notifications(uint32_t viewer_id) const {
+bool VoxelEngine::is_viewer_requiring_data_block_notifications(ViewerID viewer_id) const {
 	const Viewer &viewer = _world.viewers.get(viewer_id);
 	return viewer.requires_data_block_notifications;
 }
 
-void VoxelEngine::set_viewer_network_peer_id(uint32_t viewer_id, int peer_id) {
+void VoxelEngine::set_viewer_network_peer_id(ViewerID viewer_id, int peer_id) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.network_peer_id = peer_id;
 }
 
-int VoxelEngine::get_viewer_network_peer_id(uint32_t viewer_id) const {
+int VoxelEngine::get_viewer_network_peer_id(ViewerID viewer_id) const {
 	const Viewer &viewer = _world.viewers.get(viewer_id);
 	return viewer.network_peer_id;
 }
 
-bool VoxelEngine::viewer_exists(uint32_t viewer_id) const {
-	return _world.viewers.is_valid(viewer_id);
+bool VoxelEngine::viewer_exists(ViewerID viewer_id) const {
+	return _world.viewers.exists(viewer_id);
 }
 
 void VoxelEngine::push_main_thread_time_spread_task(
@@ -222,6 +291,10 @@ void VoxelEngine::push_async_io_tasks(Span<zylann::IThreadedTask *> tasks) {
 	_general_thread_pool.enqueue(tasks, true);
 }
 
+void VoxelEngine::push_gpu_task(IGPUTask *task) {
+	_gpu_task_runner.push(task);
+}
+
 void VoxelEngine::process() {
 	ZN_PROFILE_SCOPE();
 	ZN_PROFILE_PLOT("Static memory usage", int64_t(OS::get_singleton()->get_static_memory_usage()));
@@ -250,7 +323,7 @@ void VoxelEngine::process() {
 		}
 		size_t i = 0;
 		unsigned int max_distance = 0;
-		_world.viewers.for_each([&i, &max_distance, this](Viewer &viewer) {
+		_world.viewers.for_each_value([&i, &max_distance, this](Viewer &viewer) {
 			_world.shared_priority_dependency->viewers[i] = viewer.world_position;
 			if (viewer.view_distance > max_distance) {
 				max_distance = viewer.view_distance;

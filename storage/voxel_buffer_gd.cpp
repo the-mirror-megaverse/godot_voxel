@@ -160,7 +160,7 @@ void VoxelBuffer::for_each_voxel_metadata(const Callable &callback) const {
 
 #elif defined(ZN_GODOT_EXTENSION)
 		// TODO Error reporting? GodotCpp doesn't expose anything
-		//callback.call(it->key, v);
+		// callback.call(it->key, v);
 		// TODO GodotCpp is missing the implementation of `Callable::call`.
 		ZN_PRINT_ERROR("Unable to call Callable, go moan at https://github.com/godotengine/godot-cpp/issues/802");
 #endif
@@ -215,7 +215,7 @@ Ref<Image> VoxelBuffer::debug_print_sdf_to_image_top_down() {
 
 Ref<Image> VoxelBuffer::debug_print_sdf_to_image_top_down(const VoxelBufferInternal &vb) {
 	const Vector3i size = vb.get_size();
-	Ref<Image> im = Image::create_empty(size.x, size.z, false, Image::FORMAT_RGB8);
+	Ref<Image> im = create_empty_image(size.x, size.z, false, Image::FORMAT_RGB8);
 	Vector3i pos;
 	for (pos.z = 0; pos.z < size.z; ++pos.z) {
 		for (pos.x = 0; pos.x < size.x; ++pos.x) {
@@ -238,7 +238,7 @@ Ref<Image> VoxelBuffer::debug_print_sdf_y_slice(float scale, int y) const {
 	const Vector3i res = buffer.get_size();
 	ERR_FAIL_COND_V(y < 0 || y >= res.y, Ref<Image>());
 
-	Ref<Image> im = Image::create_empty(res.x, res.z, false, Image::FORMAT_RGB8);
+	Ref<Image> im = create_empty_image(res.x, res.z, false, Image::FORMAT_RGB8);
 
 	const Color nega_col(0.5f, 0.5f, 1.0f);
 	const Color posi_col(1.0f, 0.6f, 0.1f);
@@ -345,4 +345,4 @@ void VoxelBuffer::_bind_methods() {
 	BIND_CONSTANT(MAX_SIZE);
 }
 
-} //namespace zylann::voxel::gd
+} // namespace zylann::voxel::gd

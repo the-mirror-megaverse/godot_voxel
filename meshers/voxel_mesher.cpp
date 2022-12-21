@@ -23,13 +23,14 @@ Ref<Mesh> VoxelMesher::build_mesh(
 	virtual_texture_settings.begin_lod_index = 0;
 
 	if (additional_data.size() > 0) {
+		// This is mainly for testing purposes, or small-scale meshing.
 		Ref<VoxelGenerator> generator = additional_data.get("generator", Variant());
 		input.generator = generator.ptr();
 		input.origin_in_voxels = additional_data.get("origin_in_voxels", Vector3i());
 		virtual_texture_settings.enabled = additional_data.get("normalmap_enabled", false);
 		virtual_texture_settings.octahedral_encoding_enabled =
 				additional_data.get("octahedral_normal_encoding_enabled", false);
-		virtual_texture_settings.tile_resolution_min = additional_data.get("normalmap_tile_resolution", 16);
+		virtual_texture_settings.tile_resolution_min = int(additional_data.get("normalmap_tile_resolution", 16));
 		virtual_texture_settings.tile_resolution_max = virtual_texture_settings.tile_resolution_min;
 		virtual_texture_settings.max_deviation_degrees =
 				math::clamp(int(additional_data.get("normalmap_max_deviation_degrees", 0)),
@@ -82,11 +83,11 @@ Ref<Mesh> VoxelMesher::build_mesh(
 			TransvoxelCellIterator cell_iterator(cell_infos);
 			NormalMapData nm_data;
 
-			compute_normalmap(cell_iterator, to_span(mesh_arrays.vertices), to_span(mesh_arrays.normals),
+			compute_normalmap_data(cell_iterator, to_span(mesh_arrays.vertices), to_span(mesh_arrays.normals),
 					to_span(mesh_arrays.indices), nm_data, virtual_texture_settings.tile_resolution_min,
-					*input.generator, nullptr, input.origin_in_voxels, input.lod_index,
+					*input.generator, nullptr, input.origin_in_voxels, input.voxels.get_size(), input.lod_index,
 					virtual_texture_settings.octahedral_encoding_enabled,
-					math::deg_to_rad(float(virtual_texture_settings.max_deviation_degrees)));
+					math::deg_to_rad(float(virtual_texture_settings.max_deviation_degrees)), false);
 
 			const Vector3i block_size =
 					input.voxels.get_size() - Vector3iUtil::create(get_minimum_padding() + get_maximum_padding());

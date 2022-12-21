@@ -10,8 +10,8 @@
 #include "edition/voxel_tool_lod_terrain.h"
 #include "edition/voxel_tool_terrain.h"
 #include "engine/voxel_engine_gd.h"
+#include "generators/graph/node_type_db.h"
 #include "generators/graph/voxel_generator_graph.h"
-#include "generators/graph/voxel_graph_node_db.h"
 #include "generators/simple/voxel_generator_flat.h"
 #include "generators/simple/voxel_generator_heightmap.h"
 #include "generators/simple/voxel_generator_image.h"
@@ -68,6 +68,7 @@
 #include "editor/editor_plugin.h"
 #endif
 #include "editor/fast_noise_lite/fast_noise_lite_editor_plugin.h"
+#include "editor/graph/voxel_graph_editor_node_preview.h"
 #include "editor/graph/voxel_graph_editor_plugin.h"
 #include "editor/instance_library/voxel_instance_library_editor_plugin.h"
 #include "editor/instance_library/voxel_instance_library_multimesh_item_editor_plugin.h"
@@ -88,10 +89,12 @@
 #include "editor/graph/editor_property_text_change_on_submit.h"
 #include "editor/graph/voxel_graph_editor.h"
 #include "editor/graph/voxel_graph_editor_inspector_plugin.h"
+#include "editor/graph/voxel_graph_editor_io_dialog.h"
 #include "editor/graph/voxel_graph_editor_node.h"
 #include "editor/graph/voxel_graph_editor_node_preview.h"
 #include "editor/graph/voxel_graph_editor_shader_dialog.h"
 #include "editor/graph/voxel_graph_editor_window.h"
+#include "editor/graph/voxel_graph_function_inspector_plugin.h"
 #include "editor/graph/voxel_graph_node_inspector_wrapper.h"
 #include "editor/graph/voxel_range_analysis_dialog.h"
 #include "editor/instance_library/voxel_instance_library_inspector_plugin.h"
@@ -143,7 +146,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		VoxelMemoryPool::create_singleton();
 		VoxelStringNames::create_singleton();
-		VoxelGraphNodeDB::create_singleton();
+		pg::NodeTypeDB::create_singleton();
 
 		unsigned int main_thread_budget_usec;
 		const VoxelEngine::ThreadsConfig threads_config =
@@ -151,11 +154,11 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		VoxelEngine::create_singleton(threads_config);
 		VoxelEngine::get_singleton().set_main_thread_time_budget_usec(main_thread_budget_usec);
 #if defined(ZN_GODOT)
-		// TODO Pick this from the current renderer + user option (at time of writing, Godot 4 has only one renderer and
-		// has not figured out how such option would be exposed).
-		// Could use `can_create_resources_async` but this is internal.
-		// AFAIK `is_low_end` will be `true` only for OpenGL backends, which are the only ones not supporting async
-		// resource creation.
+		// TODO Enhancement: threaded graphics resource building should be initialized better.
+		// Pick this from the current renderer + user option (at time of writing, Godot 4 has only one
+		// renderer and has not figured out how such option would be exposed). Could use `can_create_resources_async`
+		// but this is internal. AFAIK `is_low_end` will be `true` only for OpenGL backends, which are the only ones not
+		// supporting async resource creation.
 		VoxelEngine::get_singleton().set_threaded_graphics_resource_building_enabled(
 				RenderingServer::get_singleton()->is_low_end() == false);
 #else
@@ -171,8 +174,9 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 
 		VoxelMesherTransvoxel::load_static_resources();
 
-		// TODO Can I prevent users from instancing it? is "register_virtual_class" correct for a class that's not
-		// abstract?
+		// TODO Enhancement: can I prevent users from instancing `VoxelEngine`?
+		// This class is used as a singleton so it's not really abstract.
+		// Should I use `register_abstract_class` anyways?
 		ClassDB::register_class<gd::VoxelEngine>();
 
 		// Misc
@@ -185,7 +189,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<VoxelInstanceLibrarySceneItem>();
 		ClassDB::register_class<VoxelDataBlockEnterInfo>();
 		ClassDB::register_class<VoxelSaveCompletionTracker>();
-		ClassDB::register_class<VoxelGraphFunction>();
+		ClassDB::register_class<pg::VoxelGraphFunction>();
 
 		// Storage
 		ClassDB::register_class<gd::VoxelBuffer>();
@@ -269,7 +273,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::add_compatibility_class("VoxelInstanceLibraryItem", "VoxelInstanceLibraryMultiMeshItem");
 		// Not possible to add a compat class for this one because the new name is indistinguishable from an old one.
 		// However this is an abstract class so it should not be found in resources hopefully
-		//ClassDB::add_compatibility_class("VoxelInstanceLibraryItemBase", "VoxelInstanceLibraryItem");
+		// ClassDB::add_compatibility_class("VoxelInstanceLibraryItemBase", "VoxelInstanceLibraryItem");
 #endif
 
 #ifdef VOXEL_RUN_TESTS
@@ -279,6 +283,8 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		VoxelGraphEditorNodePreview::load_resources();
+
 #if defined(ZN_GODOT)
 		EditorPlugins::add_by_type<VoxelGraphEditorPlugin>();
 		EditorPlugins::add_by_type<VoxelTerrainEditorPlugin>();
@@ -358,7 +364,7 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 
 		VoxelMesherTransvoxel::free_static_resources();
 		VoxelStringNames::destroy_singleton();
-		VoxelGraphNodeDB::destroy_singleton();
+		pg::NodeTypeDB::destroy_singleton();
 		gd::VoxelEngine::destroy_singleton();
 		VoxelEngine::destroy_singleton();
 
@@ -369,6 +375,7 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		zylann::free_debug_resources();
+		VoxelGraphEditorNodePreview::unload_resources();
 
 		// TODO GDX: Can't remove plugins.
 	}
@@ -378,8 +385,8 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 #ifdef ZN_GODOT_EXTENSION
 extern "C" {
 // Library entry point
-GDNativeBool GDN_EXPORT voxel_library_init(const GDNativeInterface *p_interface,
-		const GDNativeExtensionClassLibraryPtr p_library, GDNativeInitialization *r_initialization) {
+GDExtensionBool GDE_EXPORT voxel_library_init(const GDExtensionInterface *p_interface,
+		const GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
 	godot::GDExtensionBinding::InitObject init_obj(p_interface, p_library, r_initialization);
 
 	init_obj.register_initializer(initialize_voxel_module);

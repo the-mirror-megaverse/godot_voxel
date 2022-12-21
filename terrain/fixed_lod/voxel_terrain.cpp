@@ -13,6 +13,7 @@
 #include "../../storage/voxel_data.h"
 #include "../../util/container_funcs.h"
 #include "../../util/godot/array.h"
+#include "../../util/godot/base_material_3d.h" // For property hint in release mode in GDExtension...
 #include "../../util/godot/concave_polygon_shape_3d.h"
 #include "../../util/godot/engine.h"
 #include "../../util/godot/scene_tree.h"
@@ -59,7 +60,7 @@ VoxelTerrain::VoxelTerrain() {
 			}
 			self->apply_mesh_update(data);
 		}
-		uint32_t volume_id = 0;
+		VolumeID volume_id;
 		VoxelTerrain *self = nullptr;
 		VoxelEngine::BlockMeshOutput data;
 	};
@@ -229,7 +230,7 @@ void VoxelTerrain::set_mesh_block_size(unsigned int mesh_block_size) {
 	// VoxelEngine::get_singleton().set_volume_render_block_size(_volume_id, mesh_block_size);
 
 	// No update on bounds because we can support a mismatch, as long as it is a multiple of data block size
-	//set_bounds(_bounds_in_voxels);
+	// set_bounds(_bounds_in_voxels);
 }
 
 void VoxelTerrain::restart_stream() {
@@ -288,7 +289,7 @@ void VoxelTerrain::set_mesher(Ref<VoxelMesher> mesher) {
 	update_configuration_warnings();
 }
 
-void VoxelTerrain::get_viewers_in_area(std::vector<int> &out_viewer_ids, Box3i voxel_box) const {
+void VoxelTerrain::get_viewers_in_area(std::vector<ViewerID> &out_viewer_ids, Box3i voxel_box) const {
 	const Box3i block_box = voxel_box.downscaled(get_data_block_size());
 
 	for (auto it = _paired_viewers.begin(); it != _paired_viewers.end(); ++it) {
@@ -799,7 +800,7 @@ static void init_sparse_grid_priority_dependency(PriorityDependency &dep, Vector
 			math::squared(shared_viewers_data->highest_view_distance + 2.f * transformed_block_radius);
 }
 
-static void request_block_load(uint32_t volume_id, std::shared_ptr<StreamingDependency> stream_dependency,
+static void request_block_load(VolumeID volume_id, std::shared_ptr<StreamingDependency> stream_dependency,
 		uint32_t data_block_size, Vector3i block_pos,
 		std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data, const Transform3D volume_transform,
 		bool request_instances) {
@@ -880,7 +881,7 @@ void VoxelTerrain::consume_block_data_save_requests(
 		saving_tracker->set_count(task_scheduler.get_io_count());
 	}
 
-	//print_line(String("Sending {0} block requests").format(varray(input.blocks_to_emerge.size())));
+	// print_line(String("Sending {0} block requests").format(varray(input.blocks_to_emerge.size())));
 	_blocks_to_save.clear();
 }
 
@@ -892,8 +893,8 @@ void VoxelTerrain::emit_data_block_loaded(Vector3i bpos) {
 	// them). It isn't planned to expose VoxelBuffer locks because there are too many of them, it may likely shift
 	// to another system in the future, and might even be changed to no longer inherit Reference. So unless this is
 	// absolutely necessary, buffers aren't exposed. Workaround: use VoxelTool
-	//const Variant vbuffer = block->voxels;
-	//const Variant *args[2] = { &vpos, &vbuffer };
+	// const Variant vbuffer = block->voxels;
+	// const Variant *args[2] = { &vpos, &vbuffer };
 	emit_signal(VoxelStringNames::get_singleton().block_loaded, bpos);
 }
 
@@ -901,7 +902,7 @@ void VoxelTerrain::emit_data_block_unloaded(Vector3i bpos) {
 	emit_signal(VoxelStringNames::get_singleton().block_unloaded, bpos);
 }
 
-bool VoxelTerrain::try_get_paired_viewer_index(uint32_t id, size_t &out_i) const {
+bool VoxelTerrain::try_get_paired_viewer_index(ViewerID id, size_t &out_i) const {
 	for (size_t i = 0; i < _paired_viewers.size(); ++i) {
 		const PairedViewer &p = _paired_viewers[i];
 		if (p.id == id) {
@@ -913,7 +914,7 @@ bool VoxelTerrain::try_get_paired_viewer_index(uint32_t id, size_t &out_i) const
 }
 
 // TODO It is unclear yet if this API will stay. I have a feeling it might consume a lot of CPU
-void VoxelTerrain::notify_data_block_enter(const VoxelDataBlock &block, Vector3i bpos, uint32_t viewer_id) {
+void VoxelTerrain::notify_data_block_enter(const VoxelDataBlock &block, Vector3i bpos, ViewerID viewer_id) {
 	if (!VoxelEngine::get_singleton().viewer_exists(viewer_id)) {
 		// The viewer might have been removed between the moment we requested the block and the moment we finished
 		// loading it
@@ -938,7 +939,7 @@ void VoxelTerrain::notify_data_block_enter(const VoxelDataBlock &block, Vector3i
 void VoxelTerrain::process() {
 	ZN_PROFILE_SCOPE();
 	process_viewers();
-	//process_received_data_blocks();
+	// process_received_data_blocks();
 	process_meshing();
 }
 
@@ -985,7 +986,7 @@ void VoxelTerrain::process_viewers() {
 			const Transform3D world_to_local_transform;
 			const float view_distance_scale;
 
-			inline void operator()(const VoxelEngine::Viewer &viewer, uint32_t viewer_id) {
+			inline void operator()(ViewerID viewer_id, const VoxelEngine::Viewer &viewer) {
 				size_t paired_viewer_index;
 				if (!self.try_get_paired_viewer_index(viewer_id, paired_viewer_index)) {
 					PairedViewer p;
@@ -1149,7 +1150,7 @@ void VoxelTerrain::process_viewers() {
 }
 
 void VoxelTerrain::process_viewer_data_box_change(
-		uint32_t viewer_id, Box3i prev_data_box, Box3i new_data_box, bool can_load_blocks) {
+		ViewerID viewer_id, Box3i prev_data_box, Box3i new_data_box, bool can_load_blocks) {
 	ZN_PROFILE_SCOPE();
 
 	static thread_local std::vector<Vector3i> tls_missing_blocks;
@@ -1263,7 +1264,7 @@ void VoxelTerrain::process_viewer_data_box_change(
 void VoxelTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob) {
 	ZN_PROFILE_SCOPE();
 
-	//print_line(String("Receiving {0} blocks").format(varray(output.emerged_blocks.size())));
+	// print_line(String("Receiving {0} blocks").format(varray(output.emerged_blocks.size())));
 
 	if (ob.type == VoxelEngine::BlockDataOutput::TYPE_SAVED) {
 		if (ob.dropped) {
@@ -1330,7 +1331,7 @@ void VoxelTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob) {
 	emit_data_block_loaded(block_pos);
 
 	for (unsigned int i = 0; i < loading_block.viewers_to_notify.size(); ++i) {
-		const uint32_t viewer_id = loading_block.viewers_to_notify[i];
+		const ViewerID viewer_id = loading_block.viewers_to_notify[i];
 		notify_data_block_enter(block, block_pos, viewer_id);
 	}
 
@@ -1420,7 +1421,7 @@ void VoxelTerrain::process_meshing() {
 	std::shared_ptr<PriorityDependency::ViewersData> shared_viewers_data =
 			VoxelEngine::get_singleton().get_shared_viewers_data_from_default_world();
 
-	//const int used_channels_mask = get_used_channels_mask();
+	// const int used_channels_mask = get_used_channels_mask();
 	const int mesh_to_data_factor = get_mesh_block_size() / get_data_block_size();
 
 	for (size_t bi = 0; bi < _blocks_pending_update.size(); ++bi) {
@@ -1445,7 +1446,7 @@ void VoxelTerrain::process_meshing() {
 		}
 #endif
 
-		//print_line(String("DDD request {0}").format(varray(mesh_request.render_block_position.to_vec3())));
+		// print_line(String("DDD request {0}").format(varray(mesh_request.render_block_position.to_vec3())));
 		// We'll allocate this quite often. If it becomes a problem, it should be easy to pool.
 		MeshBlockTask *task = ZN_NEW(MeshBlockTask);
 		task->volume_id = _volume_id;
@@ -1488,17 +1489,17 @@ void VoxelTerrain::process_meshing() {
 
 	_stats.time_request_blocks_to_update = profiling_clock.restart();
 
-	//print_line(String("d:") + String::num(_dirty_blocks.size()) + String(", q:") +
-	//String::num(_block_update_queue.size()));
+	// print_line(String("d:") + String::num(_dirty_blocks.size()) + String(", q:") +
+	// String::num(_block_update_queue.size()));
 }
 
 void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 	ZN_PROFILE_SCOPE();
-	//print_line(String("DDD receive {0}").format(varray(ob.position.to_vec3())));
+	// print_line(String("DDD receive {0}").format(varray(ob.position.to_vec3())));
 
 	VoxelMeshBlockVT *block = _mesh_map.get_block(ob.position);
 	if (block == nullptr) {
-		//print_line("- no longer loaded");
+		// print_line("- no longer loaded");
 		// That block is no longer loaded, drop the result
 		++_stats.dropped_block_meshs;
 		return;
@@ -1688,8 +1689,8 @@ bool VoxelTerrain::_b_try_set_block_data(Vector3i position, Ref<gd::VoxelBuffer>
 }
 
 PackedInt32Array VoxelTerrain::_b_get_viewer_network_peer_ids_in_area(Vector3i area_origin, Vector3i area_size) const {
-	static thread_local std::vector<int> s_ids;
-	std::vector<int> &viewer_ids = s_ids;
+	static thread_local std::vector<ViewerID> s_ids;
+	std::vector<ViewerID> &viewer_ids = s_ids;
 	viewer_ids.clear();
 	get_viewers_in_area(viewer_ids, Box3i(area_origin, area_size));
 

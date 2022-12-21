@@ -7,6 +7,7 @@
 #include "../util/dstack.h"
 #include "../util/godot/callable.h"
 #include "../util/godot/collision_shape_3d.h"
+#include "../util/godot/convex_polygon_shape_3d.h"
 #include "../util/godot/mesh.h"
 #include "../util/godot/mesh_instance_3d.h"
 #include "../util/godot/rigid_body_3d.h"
@@ -473,8 +474,8 @@ Array separate_floating_chunks(VoxelTool &voxel_tool, Box3i world_box, Node *par
 	};
 	std::vector<InstanceInfo> instances_info;
 
-	const int min_padding = 2; //mesher->get_minimum_padding();
-	const int max_padding = 2; //mesher->get_maximum_padding();
+	const int min_padding = 2; // mesher->get_minimum_padding();
+	const int max_padding = 2; // mesher->get_maximum_padding();
 
 	{
 		ZN_PROFILE_SCOPE_NAMED("Extraction");
@@ -748,7 +749,7 @@ void VoxelToolLodTerrain::stamp_sdf(
 	op.shape.isolevel = isolevel;
 	op.shape.sdf_scale = sdf_scale;
 	// Note, the passed buffer must not be shared with another thread.
-	//buffer.decompress_channel(channel);
+	// buffer.decompress_channel(channel);
 	ZN_ASSERT_RETURN(buffer.get_channel_data(channel, op.shape.buffer));
 
 	VoxelDataGrid grid;
@@ -863,8 +864,8 @@ void VoxelToolLodTerrain::do_graph(Ref<VoxelGeneratorGraph> graph, Transform3D t
 			graph->generate_series(in_x, in_y, in_z, in_sdf);
 
 			// Read result
-			const VoxelGraphRuntime::State &state = VoxelGeneratorGraph::get_last_state_from_current_thread();
-			const VoxelGraphRuntime::Buffer &graph_buffer = state.get_buffer(output_sdf_buffer_index);
+			const pg::Runtime::State &state = VoxelGeneratorGraph::get_last_state_from_current_thread();
+			const pg::Runtime::Buffer &graph_buffer = state.get_buffer(output_sdf_buffer_index);
 
 			// Apply strength and graph scale. Input serves as output too, shouldn't overlap
 			for (unsigned int i = 0; i < in_sdf.size(); ++i) {

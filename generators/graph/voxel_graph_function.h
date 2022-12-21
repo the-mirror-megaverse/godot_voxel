@@ -5,9 +5,13 @@
 #include "../../util/godot/resource.h"
 #include "program_graph.h"
 
-namespace zylann::voxel {
+namespace zylann::voxel::pg {
 
 // Generic processing graph made of operation nodes.
+// TODO This class had to be prefixed `VoxelGraph` but I wished it was just `pg::Function`.
+// It is that way because Godot classes have no namespaces.
+// This class is progressively becoming more generic, it doesn't have much relation to voxels (but is useful for
+// processing data).
 class VoxelGraphFunction : public Resource {
 	GDCLASS(VoxelGraphFunction, Resource)
 public:
@@ -82,7 +86,14 @@ public:
 
 	struct Port {
 		NodeTypeID type;
+		// Used for port types that can appear multiple times, but with different indices.
+		// Initially used for OutputWeight nodes.
+		unsigned int sub_index = 0;
+		// Name of the port. If the port is custom, it identifies it (it doesn't matter otherwise).
 		String name;
+
+		Port() {}
+		Port(NodeTypeID p_type, const String &p_name) : type(p_type), name(p_name) {}
 
 		inline bool is_custom() const {
 			return type == NODE_CUSTOM_INPUT || type == NODE_CUSTOM_OUTPUT;
@@ -92,7 +103,7 @@ public:
 			if (is_custom()) {
 				return name == other.name;
 			} else {
-				return type == other.type;
+				return type == other.type && sub_index == other.sub_index;
 			}
 		}
 	};
@@ -176,6 +187,9 @@ public:
 	Dictionary get_graph_as_variant_data() const;
 	bool load_graph_from_variant_data(Dictionary data);
 
+	unsigned int get_node_input_count(uint32_t node_id) const;
+	unsigned int get_node_output_count(uint32_t node_id) const;
+
 	// TODO Should this be directly a node type?
 	enum AutoConnect { //
 		AUTO_CONNECT_NONE,
@@ -184,17 +198,14 @@ public:
 		AUTO_CONNECT_Z
 	};
 
-	unsigned int get_node_input_count(uint32_t node_id) const;
-	unsigned int get_node_output_count(uint32_t node_id) const;
-
 	static bool try_get_node_type_id_from_auto_connect(AutoConnect ac, NodeTypeID &out_node_type);
 	static bool try_get_auto_connect_from_node_type_id(NodeTypeID node_type, AutoConnect &out_ac);
 
 	void get_node_input_info(
 			uint32_t node_id, unsigned int input_index, String *out_name, AutoConnect *out_autoconnect) const;
 	String get_node_output_name(uint32_t node_id, unsigned int output_index) const;
-	Span<const Port> get_input_definitions();
-	Span<const Port> get_output_definitions();
+	Span<const Port> get_input_definitions() const;
+	Span<const Port> get_output_definitions() const;
 	// Currently used for testing
 	void set_io_definitions(Span<const Port> inputs, Span<const Port> outputs);
 	bool contains_reference_to_function(Ref<VoxelGraphFunction> p_func, int max_recursion = 16) const;
@@ -230,8 +241,8 @@ private:
 	static void _bind_methods();
 
 	ProgramGraph _graph;
-	std::vector<VoxelGraphFunction::Port> _inputs;
-	std::vector<VoxelGraphFunction::Port> _outputs;
+	std::vector<Port> _inputs;
+	std::vector<Port> _outputs;
 };
 
 ProgramGraph::Node *create_node_internal(ProgramGraph &graph, VoxelGraphFunction::NodeTypeID type_id, Vector2 position,
@@ -250,8 +261,8 @@ inline String get_port_display_name(const VoxelGraphFunction::Port &port) {
 
 #endif
 
-} // namespace zylann::voxel
+} // namespace zylann::voxel::pg
 
-ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::VoxelGraphFunction, NodeTypeID)
+ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::pg::VoxelGraphFunction, NodeTypeID)
 
 #endif // VOXEL_GRAPH_FUNCTION_H

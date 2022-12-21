@@ -60,8 +60,11 @@ struct VoxelLodTerrainUpdateData {
 		// Not really exposed for now, will wait for it to be really needed. It might never be.
 		bool cache_generated_blocks = false;
 		bool collision_enabled = true;
+		bool virtual_textures_use_gpu = false;
+		uint8_t virtual_texture_generator_override_begin_lod_index = 0;
 		unsigned int mesh_block_size_po2 = 4;
 		NormalMapSettings virtual_texture_settings;
+		Ref<VoxelGenerator> virtual_texture_generator_override;
 	};
 
 	enum MeshState {
@@ -84,7 +87,7 @@ struct VoxelLodTerrainUpdateData {
 		std::atomic<VirtualTextureState> virtual_texture_state;
 		uint8_t transition_mask;
 		bool active;
-		//bool pending_transition_update;
+		// bool pending_transition_update;
 
 		MeshBlockState() :
 				state(MESH_NEVER_UPDATED),

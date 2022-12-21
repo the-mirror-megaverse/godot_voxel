@@ -27,7 +27,7 @@ public:
 	void clear();
 	void load_plane_preset();
 
-	Ref<VoxelGraphFunction> get_main_function() const;
+	Ref<pg::VoxelGraphFunction> get_main_function() const;
 
 	// Performance tuning (advanced)
 
@@ -54,7 +54,7 @@ public:
 	int get_used_channels_mask() const override;
 
 	Result generate_block(VoxelGenerator::VoxelQueryData &input) override;
-	//float generate_single(const Vector3i &position);
+	// float generate_single(const Vector3i &position);
 	bool supports_single_generation() const override {
 		return true;
 	}
@@ -66,28 +66,36 @@ public:
 	void generate_series(Span<const float> positions_x, Span<const float> positions_y, Span<const float> positions_z,
 			unsigned int channel, Span<float> out_values, Vector3f min_pos, Vector3f max_pos) override;
 
-	//Ref<Resource> duplicate(bool p_subresources) const ZN_OVERRIDE_UNLESS_GODOT_EXTENSION;
+	// Ref<Resource> duplicate(bool p_subresources) const ZN_OVERRIDE_UNLESS_GODOT_EXTENSION;
 
 	// Utility
 
 	void bake_sphere_bumpmap(Ref<Image> im, float ref_radius, float min_height, float max_height);
 	void bake_sphere_normalmap(Ref<Image> im, float ref_radius, float strength);
-	String generate_shader();
 
 	// Internal
 
-	VoxelGraphRuntime::CompilationResult compile(bool debug);
+	pg::CompilationResult compile(bool debug);
 	bool is_good() const;
 
 	void generate_set(Span<float> in_x, Span<float> in_y, Span<float> in_z);
 	void generate_series(Span<float> in_x, Span<float> in_y, Span<float> in_z, Span<float> in_sdf);
 
 	// Returns state from the last generator used in the current thread
-	static const VoxelGraphRuntime::State &get_last_state_from_current_thread();
+	static const pg::Runtime::State &get_last_state_from_current_thread();
 	static Span<const uint32_t> get_last_execution_map_debug_from_current_thread();
 
 	bool try_get_output_port_address(ProgramGraph::PortLocation port, uint32_t &out_address) const;
 	int get_sdf_output_port_address() const;
+
+	// GPU support
+
+	bool supports_shaders() const override {
+		// To some extent. It might fail if the graph contains nodes that are not compatible.
+		return true;
+	}
+
+	bool get_shader_source(ShaderSourceData &out_data) const override;
 
 	// Debug
 
@@ -122,13 +130,13 @@ private:
 		unsigned int output_buffer_index;
 	};
 
-	static void gather_indices_and_weights(Span<const WeightOutput> weight_outputs,
-			const VoxelGraphRuntime::State &state, Vector3i rmin, Vector3i rmax, int ry,
-			VoxelBufferInternal &out_voxel_buffer, FixedArray<uint8_t, 4> spare_indices);
+	static void gather_indices_and_weights(Span<const WeightOutput> weight_outputs, const pg::Runtime::State &state,
+			Vector3i rmin, Vector3i rmax, int ry, VoxelBufferInternal &out_voxel_buffer,
+			FixedArray<uint8_t, 4> spare_indices);
 
 	static void _bind_methods();
 
-	Ref<VoxelGraphFunction> _main_function;
+	Ref<pg::VoxelGraphFunction> _main_function;
 
 	// This generator performs range analysis using nodes of the graph. Terrain surface can only appear when SDF
 	// crosses zero within a block. For each generated block, an estimated range of the output is calculated.
@@ -153,11 +161,17 @@ private:
 
 	// Only compiling and generation methods are thread-safe.
 
+	// Wrapper around the runtime with extra information specialized for the use case
 	struct Runtime {
-		VoxelGraphRuntime runtime;
+		pg::Runtime runtime;
 		// Indices that are not used in the graph.
 		// This is used when there are less than 4 texture weight outputs.
 		FixedArray<uint8_t, 4> spare_texture_indices;
+
+		int x_input_index = -1;
+		int y_input_index = -1;
+		int z_input_index = -1;
+		int sdf_input_index = -1;
 
 		int sdf_output_index = -1;
 		int sdf_output_buffer_index = -1;
@@ -174,6 +188,33 @@ private:
 		unsigned int weight_outputs_count = 0;
 	};
 
+	// Helper to setup inputs for runtime queries
+	template <typename T>
+	struct QueryInputs {
+		FixedArray<T, 4> query_inputs;
+		unsigned int input_count = 0;
+
+		inline QueryInputs(const Runtime &runtime_wrapper, T x, T y, T z, T sdf) {
+			if (runtime_wrapper.x_input_index != -1) {
+				query_inputs[runtime_wrapper.x_input_index] = x;
+			}
+			if (runtime_wrapper.y_input_index != -1) {
+				query_inputs[runtime_wrapper.y_input_index] = y;
+			}
+			if (runtime_wrapper.z_input_index != -1) {
+				query_inputs[runtime_wrapper.z_input_index] = z;
+			}
+			if (runtime_wrapper.sdf_input_index != -1) {
+				query_inputs[runtime_wrapper.sdf_input_index] = sdf;
+			}
+			input_count = runtime_wrapper.runtime.get_input_count();
+		}
+
+		inline Span<T> get() {
+			return to_span(query_inputs, input_count);
+		}
+	};
+
 	std::shared_ptr<Runtime> _runtime = nullptr;
 	RWLock _runtime_lock;
 
@@ -183,8 +224,8 @@ private:
 		std::vector<float> z_cache;
 		std::vector<float> input_sdf_slice_cache;
 		std::vector<float> input_sdf_full_cache;
-		VoxelGraphRuntime::State state;
-		VoxelGraphRuntime::ExecutionMap optimized_execution_map;
+		pg::Runtime::State state;
+		pg::Runtime::ExecutionMap optimized_execution_map;
 	};
 
 	static Cache &get_tls_cache();

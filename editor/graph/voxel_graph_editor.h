@@ -4,6 +4,7 @@
 #include "../../generators/graph/voxel_generator_graph.h"
 #include "../../util/godot/control.h"
 #include "../../util/godot/editor_undo_redo_manager.h"
+#include "../../util/math/vector2f.h"
 #include "../voxel_debug.h"
 
 ZN_GODOT_FORWARD_DECLARE(class GraphEdit)
@@ -43,10 +44,12 @@ public:
 		return _generator;
 	}
 
-	void set_graph(Ref<VoxelGraphFunction> graph);
-	Ref<VoxelGraphFunction> get_graph() const;
+	void set_graph(Ref<pg::VoxelGraphFunction> graph);
+	Ref<pg::VoxelGraphFunction> get_graph() const;
 
 	void set_undo_redo(Ref<EditorUndoRedoManager> undo_redo);
+	Ref<EditorUndoRedoManager> get_undo_redo() const;
+
 	void set_voxel_node(VoxelNode *node);
 
 	// To be called when the number of inputs in a node changes.
@@ -85,6 +88,7 @@ private:
 	void profile();
 	void update_preview_axes_menu();
 	void update_functions();
+	void set_preview_transform(Vector2f offset, float scale);
 
 	void _on_graph_edit_gui_input(Ref<InputEvent> event);
 	void _on_graph_edit_connection_request(String from_node_name, int from_slot, String to_node_name, int to_slot);
@@ -115,13 +119,14 @@ private:
 	void _on_function_quick_open_dialog_quick_open();
 #endif
 	void _on_node_resize_request(Vector2 new_size, int node_id);
+	void _on_graph_node_preview_gui_input(Ref<InputEvent> event);
 
 	void _check_nothing_selected();
 
 	static void _bind_methods();
 
 	Ref<VoxelGeneratorGraph> _generator;
-	Ref<VoxelGraphFunction> _graph;
+	Ref<pg::VoxelGraphFunction> _graph;
 
 	GraphEdit *_graph_edit = nullptr;
 	PopupMenu *_context_menu = nullptr;
@@ -152,12 +157,14 @@ private:
 	PopupMenu *_preview_axes_menu = nullptr;
 
 	enum PreviewAxes { //
-		PREVIEW_XY = 0,
-		PREVIEW_XZ,
+		PREVIEW_AXES_XY = 0,
+		PREVIEW_AXES_XZ,
 		PREVIEW_AXES_OPTIONS_COUNT
 	};
 
-	PreviewAxes _preview_axes = PREVIEW_XY;
+	PreviewAxes _preview_axes = PREVIEW_AXES_XY;
+	Vector2f _preview_offset;
+	float _preview_scale = 1.f;
 };
 
 } // namespace zylann::voxel

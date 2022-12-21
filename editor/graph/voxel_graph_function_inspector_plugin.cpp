@@ -1,14 +1,19 @@
 #include "voxel_graph_function_inspector_plugin.h"
 #include "../../generators/graph/voxel_graph_function.h"
+#include "../../util/godot/button.h"
 #include "../../util/godot/callable.h"
+#include "../../util/godot/h_box_container.h"
 #include "../../util/godot/h_separator.h"
 #include "../../util/godot/label.h"
 #include "../../util/godot/v_box_container.h"
+#include "../../util/godot/v_separator.h"
 #include "voxel_graph_editor_plugin.h"
 
 namespace zylann::voxel {
 
-bool VoxelGraphFunctionInspectorPlugin::_zn_can_handle(Object *obj) {
+using namespace pg;
+
+bool VoxelGraphFunctionInspectorPlugin::_zn_can_handle(const Object *obj) const {
 	return Object::cast_to<VoxelGraphFunction>(obj) != nullptr;
 }
 
@@ -41,19 +46,25 @@ bool VoxelGraphFunctionInspectorPlugin::_zn_parse_property(Object *p_object, con
 		Span<const VoxelGraphFunction::Port> outputs = graph->get_output_definitions();
 
 		HBoxContainer *hb = memnew(HBoxContainer);
-		hb->add_child(create_ports_control(inputs, TTR("Inputs")));
+		hb->add_child(create_ports_control(inputs, ZN_TTR("Inputs")));
 		hb->add_child(memnew(VSeparator));
-		hb->add_child(create_ports_control(outputs, TTR("Outputs")));
+		hb->add_child(create_ports_control(outputs, ZN_TTR("Outputs")));
 
 		add_custom_control(hb);
 
 		Ref<VoxelGraphFunction> graph_ref(graph);
 
 		Button *edit_io_button = memnew(Button);
-		edit_io_button->set_text(TTR("Edit inputs/outputs..."));
+		edit_io_button->set_text(ZN_TTR("Edit inputs/outputs..."));
+#if defined(ZN_GODOT)
 		edit_io_button->connect("pressed",
 				ZN_GODOT_CALLABLE_MP(this, VoxelGraphFunctionInspectorPlugin, _on_edit_io_button_pressed)
 						.bind(graph_ref));
+#elif defined(ZN_GODOT_EXTENSION)
+		// TODO GDX: `Callable::bind()` isn't implemented in GodotCpp
+		// See https://github.com/godotengine/godot-cpp/issues/802
+		ZN_PRINT_ERROR("`Callable::bind()` isn't implemented in GodotCpp! Can't edit function I/O.");
+#endif
 
 		add_custom_control(edit_io_button);
 

@@ -1,5 +1,5 @@
 #include "voxel_graph_node_inspector_wrapper.h"
-#include "../../generators/graph/voxel_graph_node_db.h"
+#include "../../generators/graph/node_type_db.h"
 #include "../../util/godot/array.h"
 #include "../../util/godot/funcs.h"
 #include "../../util/log.h"
@@ -9,17 +9,24 @@
 
 namespace zylann::voxel {
 
+using namespace pg;
+
 namespace {
 const char *AUTOCONNECT_PROPERTY_NAME = "autoconnect_default_inputs";
 }
 
-void VoxelGraphNodeInspectorWrapper::setup(uint32_t p_node_id, Ref<EditorUndoRedoManager> ur, VoxelGraphEditor *ed) {
+void VoxelGraphNodeInspectorWrapper::setup(uint32_t p_node_id, VoxelGraphEditor *ed) {
 	ZN_ASSERT(ed != nullptr);
 	_graph = ed->get_graph();
 	_generator = ed->get_generator();
 	_node_id = p_node_id;
-	_undo_redo = ur;
 	_graph_editor = ed;
+}
+
+void VoxelGraphNodeInspectorWrapper::detach_from_graph_editor() {
+	_graph = Ref<VoxelGraphFunction>();
+	_generator = Ref<VoxelGeneratorGraph>();
+	_graph_editor = nullptr;
 }
 
 void VoxelGraphNodeInspectorWrapper::_get_property_list(List<PropertyInfo> *p_list) const {
@@ -39,12 +46,11 @@ void VoxelGraphNodeInspectorWrapper::_get_property_list(List<PropertyInfo> *p_li
 	// Params
 	{
 		const uint32_t node_type_id = graph->get_node_type_id(_node_id);
-		const VoxelGraphNodeDB::NodeType &node_type = VoxelGraphNodeDB::get_singleton().get_type(node_type_id);
+		const NodeType &node_type = NodeTypeDB::get_singleton().get_type(node_type_id);
 
 		p_list->push_back(PropertyInfo(Variant::NIL, "Params", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_CATEGORY));
 
-		for (size_t i = 0; i < node_type.params.size(); ++i) {
-			const VoxelGraphNodeDB::Param &param = node_type.params[i];
+		for (const NodeType::Param &param : node_type.params) {
 			if (param.hidden) {
 				continue;
 			}
@@ -65,6 +71,17 @@ void VoxelGraphNodeInspectorWrapper::_get_property_list(List<PropertyInfo> *p_li
 				if (param.multiline) {
 					pi.hint = PROPERTY_HINT_MULTILINE_TEXT;
 				}
+
+			} else if (param.enum_items.size() > 0) {
+				std::string hint_string;
+				for (unsigned int item_index = 0; item_index < param.enum_items.size(); ++item_index) {
+					if (item_index > 0) {
+						hint_string += ",";
+					}
+					hint_string += param.enum_items[item_index];
+				}
+				pi.hint_string = to_godot(hint_string);
+				pi.hint = PROPERTY_HINT_ENUM;
 			}
 
 			pi.usage = PROPERTY_USAGE_EDITOR;
@@ -185,9 +202,12 @@ static void update_expression_inputs(VoxelGraphFunction &graph, uint32_t node_id
 bool VoxelGraphNodeInspectorWrapper::_set(const StringName &p_name, const Variant &p_value) {
 	Ref<VoxelGraphFunction> graph = get_graph();
 	ERR_FAIL_COND_V(graph.is_null(), false);
-
-	ERR_FAIL_COND_V(_undo_redo == nullptr, false);
-	EditorUndoRedoManager &ur = **_undo_redo;
+	ERR_FAIL_COND_V(_graph_editor == nullptr, false);
+	// We cannot keep a reference to UndoRedo in our object because our object can be referenced by UndoRedo, which
+	// would cause a cyclic reference. So we access it from a weak reference to the editor.
+	Ref<EditorUndoRedoManager> undo_redo = _graph_editor->get_undo_redo();
+	ERR_FAIL_COND_V(undo_redo.is_null(), false);
+	EditorUndoRedoManager &ur = **undo_redo;
 
 	const String name = p_name;
 

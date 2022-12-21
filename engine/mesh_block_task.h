@@ -6,6 +6,7 @@
 #include "../util/godot/array_mesh.h"
 #include "../util/tasks/threaded_task.h"
 #include "distance_normalmaps.h"
+#include "ids.h"
 #include "meshing_dependency.h"
 #include "priority_dependency.h"
 
@@ -29,9 +30,9 @@ public:
 	// 3x3x3 or 4x4x4 grid of voxel blocks.
 	FixedArray<std::shared_ptr<VoxelBufferInternal>, constants::MAX_BLOCK_COUNT_PER_REQUEST> blocks;
 	// TODO Need to provide format
-	//FixedArray<uint8_t, VoxelBufferInternal::MAX_CHANNELS> channel_depths;
+	// FixedArray<uint8_t, VoxelBufferInternal::MAX_CHANNELS> channel_depths;
 	Vector3i mesh_block_position; // In mesh blocks of the specified lod
-	uint32_t volume_id;
+	VolumeID volume_id;
 	uint8_t lod_index = 0;
 	uint8_t blocks_count = 0;
 	uint8_t data_block_size = 0;
@@ -40,10 +41,13 @@ public:
 	// Virtual textures might be enabled, but we don't always want to update them in every mesh update.
 	// So this boolean is also checked to know if they should be computed.
 	bool require_virtual_texture = false;
+	uint8_t virtual_texture_generator_override_begin_lod_index = 0;
+	bool virtual_texture_use_gpu = false;
 	PriorityDependency priority_dependency;
 	std::shared_ptr<MeshingDependency> meshing_dependency;
 	std::shared_ptr<VoxelData> data;
 	NormalMapSettings virtual_texture_settings;
+	Ref<VoxelGenerator> virtual_texture_generator_override;
 
 private:
 	bool _has_run = false;

@@ -12,14 +12,14 @@ enum Side {
 	SIDE_RIGHT,
 	SIDE_BOTTOM,
 	SIDE_TOP,
-	// TODO I would like to swap the Z ones because it's inconsistent with coordinates...
+	// TODO Enhancement: I would like to swap the Z ones because it's inconsistent with coordinates...
 	SIDE_BACK,
 	SIDE_FRONT,
 
 	SIDE_COUNT
 };
 // Alias to the above for clarity, fixing some interpretation problems regarding the side_normals table...
-// TODO Legacy: I would like to fix the X axes, they are inverted compared to the others
+// TODO Bug: I would like to fix the X axes, they are inverted compared to the others
 enum SideAxis {
 	SIDE_POSITIVE_X = 0,
 	SIDE_NEGATIVE_X,
@@ -65,8 +65,8 @@ extern const Vector3f g_corner_position[CORNER_COUNT];
 
 extern const int g_side_quad_triangles[SIDE_COUNT][6];
 
-//extern const unsigned int g_side_coord[SIDE_COUNT];
-//extern const unsigned int g_side_sign[SIDE_COUNT];
+// extern const unsigned int g_side_coord[SIDE_COUNT];
+// extern const unsigned int g_side_sign[SIDE_COUNT];
 
 extern const Vector3i g_side_normals[SIDE_COUNT];
 extern const float g_side_tangents[SIDE_COUNT][4];

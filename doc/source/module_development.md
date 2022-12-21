@@ -140,6 +140,9 @@ For the most part, use `clang-format` and follow Godot conventions.
 - If possible, avoid plain arrays like `int a[42]`. Debuggers don't catch overruns on them. Prefer using wrappers such as `FixedArray` and `Span` (or `std::array` and `std::span` once [this](https://github.com/godotengine/godot/issues/31608) is fixed)
 - Use `uint32_t`, `uint16_t`, `uint8_t` in case integer size matters.
 - If possible, use forward declarations in headers instead of including files
+- Don't do `using namespace` in headers (Except with `godot::`, but that's only to help supporting GDExtension using the same codebase, since Godot core does not have this namespace).
+- `mutable` must ONLY be used for thread synchronization primitives. Do not use it with "cache data" to make getters `const`, as it can be misleading in multi-threaded context.
+- No use of exceptions
 
 ### Error handling
 
@@ -327,14 +330,16 @@ void process_every_frame() {
 
 ### Adding Tracy to Godot
 
-To add Tracy support, clone it under `thirdparty/tracy` (Godot's `thirdparty` folder, not the voxel module), and add the following lines in `core/SCsub`:
+To add Tracy support, clone it under `thirdparty/tracy` (Godot's `thirdparty` folder, not the voxel module). Then in `modules/voxel/SCsub`, add the following lines:
 
 ```python
 # tracy library
 env.Append(CPPDEFINES="TRACY_ENABLE")
-env_thirdparty.Append(CPPDEFINES="TRACY_ENABLE")
-env_thirdparty.add_source_files(env.core_sources, ["#thirdparty/tracy/TracyClient.cpp"])
+env_voxel.Append(CPPDEFINES="TRACY_ENABLE")
+voxel_files += ["#thirdparty/tracy/TracyClient.cpp"]
 ```
+
+Those lines might already be there, if so just uncomment them.
 
 Once you are done profiling, don't forget to remove these lines, otherwise profiling data will accumulate in memory without being retrieved.
 

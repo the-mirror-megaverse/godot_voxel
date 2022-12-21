@@ -5,12 +5,23 @@
 #include "../streams/instance_data.h"
 #include "../util/file_locker.h"
 #include "../util/memory.h"
-#include "../util/struct_db.h"
+#include "../util/slot_map.h"
 #include "../util/tasks/progressive_task_runner.h"
 #include "../util/tasks/threaded_task_runner.h"
 #include "../util/tasks/time_spread_task_runner.h"
+#include "compute_shader.h"
 #include "distance_normalmaps.h"
+#include "gpu_storage_buffer_pool.h"
+#include "gpu_task_runner.h"
+#include "ids.h"
 #include "priority_dependency.h"
+
+#include "../util/godot/rendering_device.h"
+
+ZN_GODOT_FORWARD_DECLARE(class RenderingDevice);
+#ifdef ZN_GODOT_EXTENSION
+using namespace godot;
+#endif
 
 namespace zylann::voxel {
 
@@ -82,7 +93,7 @@ public:
 		inline bool check_callbacks() const {
 			ZN_ASSERT_RETURN_V(mesh_output_callback != nullptr, false);
 			ZN_ASSERT_RETURN_V(data_output_callback != nullptr, false);
-			//ZN_ASSERT_RETURN_V(normalmap_output_callback != nullptr, false);
+			// ZN_ASSERT_RETURN_V(normalmap_output_callback != nullptr, false);
 			ZN_ASSERT_RETURN_V(data != nullptr, false);
 			return true;
 		}
@@ -115,34 +126,34 @@ public:
 	static void create_singleton(ThreadsConfig threads_config);
 	static void destroy_singleton();
 
-	uint32_t add_volume(VolumeCallbacks callbacks);
-	VolumeCallbacks get_volume_callbacks(uint32_t volume_id) const;
+	VolumeID add_volume(VolumeCallbacks callbacks);
+	VolumeCallbacks get_volume_callbacks(VolumeID volume_id) const;
 
-	void remove_volume(uint32_t volume_id);
-	bool is_volume_valid(uint32_t volume_id) const;
+	void remove_volume(VolumeID volume_id);
+	bool is_volume_valid(VolumeID volume_id) const;
 
 	std::shared_ptr<PriorityDependency::ViewersData> get_shared_viewers_data_from_default_world() const {
 		return _world.shared_priority_dependency;
 	}
 
-	uint32_t add_viewer();
-	void remove_viewer(uint32_t viewer_id);
-	void set_viewer_position(uint32_t viewer_id, Vector3 position);
-	void set_viewer_distance(uint32_t viewer_id, unsigned int distance);
-	unsigned int get_viewer_distance(uint32_t viewer_id) const;
-	void set_viewer_requires_visuals(uint32_t viewer_id, bool enabled);
-	bool is_viewer_requiring_visuals(uint32_t viewer_id) const;
-	void set_viewer_requires_collisions(uint32_t viewer_id, bool enabled);
-	bool is_viewer_requiring_collisions(uint32_t viewer_id) const;
-	void set_viewer_requires_data_block_notifications(uint32_t viewer_id, bool enabled);
-	bool is_viewer_requiring_data_block_notifications(uint32_t viewer_id) const;
-	void set_viewer_network_peer_id(uint32_t viewer_id, int peer_id);
-	int get_viewer_network_peer_id(uint32_t viewer_id) const;
-	bool viewer_exists(uint32_t viewer_id) const;
+	ViewerID add_viewer();
+	void remove_viewer(ViewerID viewer_id);
+	void set_viewer_position(ViewerID viewer_id, Vector3 position);
+	void set_viewer_distance(ViewerID viewer_id, unsigned int distance);
+	unsigned int get_viewer_distance(ViewerID viewer_id) const;
+	void set_viewer_requires_visuals(ViewerID viewer_id, bool enabled);
+	bool is_viewer_requiring_visuals(ViewerID viewer_id) const;
+	void set_viewer_requires_collisions(ViewerID viewer_id, bool enabled);
+	bool is_viewer_requiring_collisions(ViewerID viewer_id) const;
+	void set_viewer_requires_data_block_notifications(ViewerID viewer_id, bool enabled);
+	bool is_viewer_requiring_data_block_notifications(ViewerID viewer_id) const;
+	void set_viewer_network_peer_id(ViewerID viewer_id, int peer_id);
+	int get_viewer_network_peer_id(ViewerID viewer_id) const;
+	bool viewer_exists(ViewerID viewer_id) const;
 
 	template <typename F>
 	inline void for_each_viewer(F f) const {
-		_world.viewers.for_each_with_id(f);
+		_world.viewers.for_each_key_value(f);
 	}
 
 	void push_main_thread_time_spread_task(
@@ -167,6 +178,7 @@ public:
 	void push_async_io_task(IThreadedTask *task);
 	// Thread-safe.
 	void push_async_io_tasks(Span<IThreadedTask *> tasks);
+	void push_gpu_task(IGPUTask *task);
 
 	void process();
 	void wait_and_clear_all_tasks(bool warn);
@@ -198,11 +210,46 @@ public:
 
 	Stats get_stats() const;
 
+	bool has_rendering_device() const {
+		return _rendering_device != nullptr;
+	}
+
+	RenderingDevice &get_rendering_device() const {
+		ZN_ASSERT(_rendering_device != nullptr);
+		return *_rendering_device;
+	}
+
+	const ComputeShader &get_dilate_normalmap_compute_shader() const {
+		return _dilate_normalmap_shader;
+	}
+
+	const ComputeShader &get_detail_gather_hits_compute_shader() const {
+		return _detail_gather_hits_shader;
+	}
+
+	const ComputeShader &get_detail_normalmap_compute_shader() const {
+		return _detail_normalmap_shader;
+	}
+
+	const ComputeShader &get_detail_modifier_sphere_shader() const {
+		return _detail_modifier_sphere_shader;
+	}
+
+	const ComputeShader &get_detail_modifier_mesh_shader() const {
+		return _detail_modifier_mesh_shader;
+	}
+
+	RID get_filtering_sampler() const {
+		return _filtering_sampler_rid;
+	}
+
 	// TODO Should be private, but can't because `memdelete<T>` would be unable to call it otherwise...
 	~VoxelEngine();
 
 private:
 	VoxelEngine(ThreadsConfig threads_config);
+
+	void load_shaders();
 
 	// Since we are going to send data to tasks running in multiple threads, a few strategies are in place:
 	//
@@ -221,8 +268,8 @@ private:
 	};
 
 	struct World {
-		StructDB<Volume> volumes;
-		StructDB<Viewer> viewers;
+		SlotMap<Volume, uint16_t, uint16_t> volumes;
+		SlotMap<Viewer, uint16_t, uint16_t> viewers;
 
 		// Must be overwritten with a new instance if count changes.
 		std::shared_ptr<PriorityDependency::ViewersData> shared_priority_dependency;
@@ -240,6 +287,22 @@ private:
 	FileLocker _file_locker;
 
 	bool _threaded_graphics_resource_building_enabled = false;
+
+	// Rendering device used for compute shaders. May not be available depending on the chosen renderer.
+	RenderingDevice *_rendering_device = nullptr;
+	RID _filtering_sampler_rid;
+	// TODO Can `RenderingDevice` be used on multiple threads? There is no documentation.
+	// So I'll assume I can't...
+	Mutex _rendering_device_mutex;
+	GPUTaskRunner _gpu_task_runner;
+	GPUStorageBufferPool _gpu_storage_buffer_pool;
+
+	// TODO I don't know yet where to store these resource, at some point we may find a more dedicated place
+	ComputeShader _dilate_normalmap_shader;
+	ComputeShader _detail_gather_hits_shader;
+	ComputeShader _detail_normalmap_shader;
+	ComputeShader _detail_modifier_sphere_shader;
+	ComputeShader _detail_modifier_mesh_shader;
 };
 
 struct VoxelFileLockerRead {

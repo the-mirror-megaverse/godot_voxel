@@ -48,18 +48,18 @@ const int g_side_quad_triangles[SIDE_COUNT][6] = {
 	{ 0, 2, 1, 0, 3, 2 }, // FRONT (+z)
 };
 
-//const unsigned int g_side_coord[SIDE_COUNT] = { 0, 0, 1, 1, 2, 2 };
-//const unsigned int g_side_sign[SIDE_COUNT] = { 0, 1, 0, 1, 0, 1 };
+// const unsigned int g_side_coord[SIDE_COUNT] = { 0, 0, 1, 1, 2, 2 };
+// const unsigned int g_side_sign[SIDE_COUNT] = { 0, 1, 0, 1, 0, 1 };
 
 const Vector3i g_side_normals[SIDE_COUNT] = {
-	// TODO Wrong! Left should be -X
+	// TODO Bug: wrong! Left should be -X
 	Vector3i(1, 0, 0), // LEFT
 	Vector3i(-1, 0, 0), // RIGHT
 
 	Vector3i(0, -1, 0), // BOTTOM
 	Vector3i(0, 1, 0), // TOP
 
-	// TODO Wrong! Front should be -Z
+	// TODO Bug: wrong! Front should be -Z
 	Vector3i(0, 0, -1), // BACK
 	Vector3i(0, 0, 1), // FRONT
 };
@@ -98,7 +98,7 @@ const unsigned int g_side_edges[SIDE_COUNT][4] = { //
 // 3---2
 // | / | {0,1,2,0,2,3}
 // 0---1
-//static const unsigned int g_vertex_to_corner[Voxel::SIDE_COUNT][6] = {
+// static const unsigned int g_vertex_to_corner[Voxel::SIDE_COUNT][6] = {
 //    { 0, 3, 7, 0, 7, 4 },
 //    { 2, 1, 5, 2, 5, 6 },
 //    { 0, 1, 2, 0, 2, 3 },
@@ -158,7 +158,7 @@ const Vector3i g_moore_neighboring_3d[MOORE_NEIGHBORING_3D_COUNT] = {
 	Vector3i(0, 0, -1),
 	Vector3i(1, 0, -1),
 	Vector3i(-1, 0, 0),
-	//Vector3i(0,0,0),
+	// Vector3i(0,0,0),
 	Vector3i(1, 0, 0),
 	Vector3i(-1, 0, 1),
 	Vector3i(0, 0, 1),
@@ -209,4 +209,4 @@ const Vector3i g_ordered_moore_area_3d[MOORE_AREA_3D_COUNT] = { //
 	Vector3i(1, 1, 1)
 };
 
-} //namespace zylann::voxel::Cube
+} // namespace zylann::voxel::Cube

@@ -19,9 +19,11 @@
 #include "../util/godot/funcs.h"
 #include "../util/island_finder.h"
 #include "../util/math/box3i.h"
+#include "../util/slot_map.h"
 #include "../util/string_funcs.h"
 #include "../util/tasks/threaded_task_runner.h"
 #include "test_expression_parser.h"
+#include "test_normalmap_render_gpu.h"
 #include "test_octree.h"
 #include "test_voxel_graph.h"
 #include "testing.h"
@@ -901,7 +903,7 @@ void test_block_serializer_stream_peer() {
 
 	Ref<StreamPeerBuffer> peer;
 	peer.instantiate();
-	//peer->clear();
+	// peer->clear();
 
 	Ref<gd::VoxelBlockSerializer> serializer;
 	serializer.instantiate();
@@ -1099,9 +1101,9 @@ void test_fast_noise_2_basic() {
 	float nv = noise->get_noise_2d_single(Vector2(42, 666));
 	print_line(String("SIMD level: {0}").format(varray(FastNoise2::get_simd_level_name(noise->get_simd_level()))));
 	print_line(String("Noise: {0}").format(varray(nv)));
-	Ref<Image> im = Image::create_empty(256, 256, false, Image::FORMAT_RGB8);
+	Ref<Image> im = create_empty_image(256, 256, false, Image::FORMAT_RGB8);
 	noise->generate_image(im, false);
-	//im->save_png("zylann_test_fastnoise2.png");
+	// im->save_png("zylann_test_fastnoise2.png");
 }
 
 void test_fast_noise_2_empty_encoded_node_tree() {
@@ -1707,6 +1709,43 @@ void test_issue463() {
 	msdf->call("_set_data", d);
 }
 
+void test_slot_map() {
+	SlotMap<int> map;
+
+	const SlotMap<int>::Key key1 = map.add(1);
+	const SlotMap<int>::Key key2 = map.add(2);
+	const SlotMap<int>::Key key3 = map.add(3);
+
+	ZN_TEST_ASSERT(key1 != key2 && key2 != key3);
+	ZN_TEST_ASSERT(map.exists(key1));
+	ZN_TEST_ASSERT(map.exists(key2));
+	ZN_TEST_ASSERT(map.exists(key3));
+	ZN_TEST_ASSERT(map.count() == 3);
+
+	map.remove(key2);
+	ZN_TEST_ASSERT(map.exists(key1));
+	ZN_TEST_ASSERT(!map.exists(key2));
+	ZN_TEST_ASSERT(map.exists(key3));
+	ZN_TEST_ASSERT(map.count() == 2);
+
+	const SlotMap<int>::Key key4 = map.add(4);
+	ZN_TEST_ASSERT(key4 != key2);
+	ZN_TEST_ASSERT(map.count() == 3);
+
+	const int v1 = map.get(key1);
+	const int v4 = map.get(key4);
+	const int v3 = map.get(key3);
+	ZN_TEST_ASSERT(v1 == 1);
+	ZN_TEST_ASSERT(v4 == 4);
+	ZN_TEST_ASSERT(v3 == 3);
+
+	map.clear();
+	ZN_TEST_ASSERT(!map.exists(key1));
+	ZN_TEST_ASSERT(!map.exists(key4));
+	ZN_TEST_ASSERT(!map.exists(key3));
+	ZN_TEST_ASSERT(map.count() == 0);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define VOXEL_TEST(fname)                                                                                              \
@@ -1747,6 +1786,7 @@ void run_voxel_tests() {
 	VOXEL_TEST(test_voxel_graph_hash);
 #endif
 #endif
+	VOXEL_TEST(test_voxel_graph_issue471);
 	VOXEL_TEST(test_island_finder);
 	VOXEL_TEST(test_unordered_remove_if);
 	VOXEL_TEST(test_instance_data_serialization);
@@ -1772,6 +1812,8 @@ void run_voxel_tests() {
 	VOXEL_TEST(test_threaded_task_runner);
 	VOXEL_TEST(test_task_priority_values);
 	VOXEL_TEST(test_issue463);
+	VOXEL_TEST(test_normalmap_render_gpu);
+	VOXEL_TEST(test_slot_map);
 
 	print_line("------------ Voxel tests end -------------");
 }
