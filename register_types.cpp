@@ -24,7 +24,9 @@
 #include "meshers/cubes/voxel_mesher_cubes.h"
 #include "meshers/dmc/voxel_mesher_dmc.h"
 #include "meshers/transvoxel/voxel_mesher_transvoxel.h"
-#include "storage/modifiers_gd.h"
+#include "modifiers/godot/voxel_modifier_gd.h"
+#include "modifiers/godot/voxel_modifier_mesh_gd.h"
+#include "modifiers/godot/voxel_modifier_sphere_gd.h"
 #include "storage/voxel_buffer_gd.h"
 #include "storage/voxel_memory_pool.h"
 #include "storage/voxel_metadata_variant.h"
@@ -57,9 +59,9 @@
 #include "util/noise/fast_noise_2.h"
 #endif
 
-#include "util/godot/class_db.h"
-#include "util/godot/engine.h"
-#include "util/godot/project_settings.h"
+#include "util/godot/classes/engine.h"
+#include "util/godot/classes/project_settings.h"
+#include "util/godot/core/class_db.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef TOOLS_ENABLED

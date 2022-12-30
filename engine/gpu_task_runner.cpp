@@ -1,7 +1,7 @@
 #include "gpu_task_runner.h"
 #include "../util/dstack.h"
 #include "../util/errors.h"
-#include "../util/godot/rendering_device.h"
+#include "../util/godot/classes/rendering_device.h"
 #include "../util/math/funcs.h"
 #include "../util/memory.h"
 #include "../util/profiling.h"
@@ -35,7 +35,7 @@ void GPUTaskRunner::start(RenderingDevice *rd, GPUStorageBufferPool *pool) {
 
 void GPUTaskRunner::stop() {
 	if (!_running) {
-		ZN_PRINT_VERBOSE("GPUTaskRunner::stop() was called by it wasn't running.");
+		ZN_PRINT_VERBOSE("GPUTaskRunner::stop() was called but it wasn't running.");
 		return;
 	}
 	_running = false;

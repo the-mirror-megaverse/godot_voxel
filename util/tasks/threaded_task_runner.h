@@ -8,6 +8,7 @@
 #include "../thread/thread.h"
 #include "threaded_task.h"
 
+#include <atomic>
 #include <queue>
 #include <string>
 
@@ -16,7 +17,7 @@ namespace zylann {
 // Generic thread pool that performs batches of tasks based on dynamic priority
 class ThreadedTaskRunner {
 public:
-	static const uint32_t MAX_THREADS = 8;
+	static const uint32_t MAX_THREADS = 16;
 
 	enum State { //
 		STATE_RUNNING = 0,
@@ -78,6 +79,7 @@ public:
 	void wait_for_all_tasks();
 
 	State get_thread_debug_state(uint32_t i) const;
+	const char *get_thread_debug_task_name(unsigned int thread_index) const;
 	unsigned int get_debug_remaining_tasks() const;
 
 private:
@@ -96,6 +98,7 @@ private:
 		bool waiting = false;
 		State debug_state = STATE_STOPPED;
 		std::string name;
+		std::atomic<const char *> debug_running_task_name;
 
 		void wait_to_finish_and_reset() {
 			thread.wait_to_finish();

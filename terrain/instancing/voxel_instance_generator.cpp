@@ -1,9 +1,9 @@
 #include "voxel_instance_generator.h"
 #include "../../constants/voxel_string_names.h"
 #include "../../util/container_funcs.h"
-#include "../../util/godot/array_mesh.h"
-#include "../../util/godot/callable.h"
-#include "../../util/godot/random_pcg.h"
+#include "../../util/godot/classes/array_mesh.h"
+#include "../../util/godot/core/callable.h"
+#include "../../util/godot/core/random_pcg.h"
 #include "../../util/math/conv.h"
 #include "../../util/profiling.h"
 
@@ -145,7 +145,7 @@ void VoxelInstanceGenerator::generate_transforms(std::vector<Transform3f> &out_t
 					const float t1 = pcg1.randf();
 
 					// This formula gives pretty uniform distribution but involves a square root
-					//const Vector3 p = pa.linear_interpolate(pb, t0).linear_interpolate(pc, 1.f - sqrt(t1));
+					// const Vector3 p = pa.linear_interpolate(pb, t0).linear_interpolate(pc, 1.f - sqrt(t1));
 
 					// This is an approximation
 					const Vector3 p = pa.lerp(pb, t0).lerp(pc, t1);
@@ -169,7 +169,7 @@ void VoxelInstanceGenerator::generate_transforms(std::vector<Transform3f> &out_t
 				// Does not assume triangles have the same size, so instead a "unit size" is used,
 				// and more instances will be placed in triangles larger than this.
 				// This is roughly the size of one voxel's triangle
-				//const float unit_area = 0.5f * squared(block_size / 32.f);
+				// const float unit_area = 0.5f * squared(block_size / 32.f);
 
 				float accumulator = 0.f;
 				const float inv_density = 1.f / _density;
@@ -199,7 +199,7 @@ void VoxelInstanceGenerator::generate_transforms(std::vector<Transform3f> &out_t
 						const float t1 = pcg1.randf();
 
 						// This formula gives pretty uniform distribution but involves a square root
-						//const Vector3 p = pa.linear_interpolate(pb, t0).linear_interpolate(pc, 1.f - sqrt(t1));
+						// const Vector3 p = pa.linear_interpolate(pb, t0).linear_interpolate(pc, 1.f - sqrt(t1));
 
 						// This is an approximation
 						const Vector3 p = pa.lerp(pb, t0).lerp(pc, t1);
@@ -402,8 +402,10 @@ void VoxelInstanceGenerator::generate_transforms(std::vector<Transform3f> &out_t
 		const Vector3f axis_x = math::normalized(math::cross(axis_y, dir));
 		const Vector3f axis_z = math::cross(axis_x, axis_y);
 
-		t.basis = Basis3f(Vector3f(axis_x.x, axis_y.x, axis_z.x), Vector3f(axis_x.y, axis_y.y, axis_z.y),
-				Vector3f(axis_x.z, axis_y.z, axis_z.z));
+		// In Godot 3, the Basis constructor expected 3 rows, but in Godot 4 it was changed to take 3 columns...
+		// t.basis = Basis3f(Vector3f(axis_x.x, axis_y.x, axis_z.x), Vector3f(axis_x.y, axis_y.y, axis_z.y),
+		// 		Vector3f(axis_x.z, axis_y.z, axis_z.z));
+		t.basis = Basis3f(axis_x, axis_y, axis_z);
 
 		if (scale_range > 0.f) {
 			float r = pcg1.randf();
