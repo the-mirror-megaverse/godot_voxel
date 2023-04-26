@@ -1787,6 +1787,8 @@ void VoxelTerrain::_bind_methods() {
 	ClassDB::bind_method(
 			D_METHOD("is_area_edit_notification_enabled"), &VoxelTerrain::is_area_edit_notification_enabled);
 
+	ClassDB::bind_method(D_METHOD("generate_block_async", "block_position"), &VoxelTerrain::generate_block_async);
+
 	ClassDB::bind_method(D_METHOD("get_generate_collisions"), &VoxelTerrain::get_generate_collisions);
 	ClassDB::bind_method(D_METHOD("set_generate_collisions", "enabled"), &VoxelTerrain::set_generate_collisions);
 
