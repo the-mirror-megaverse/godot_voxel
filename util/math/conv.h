@@ -38,6 +38,10 @@ inline Vector2f to_vec2f(Vector2 v) {
 	return Vector2f(v.x, v.y);
 }
 
+inline Vector2f to_vec2f(Vector2i v) {
+	return Vector2f(v.x, v.y);
+}
+
 inline Vector3f to_vec3f(Vector3i v) {
 	return Vector3f(v.x, v.y, v.z);
 }
@@ -64,12 +68,13 @@ inline Transform3f to_transform3f(const Transform3D &t) {
 
 // ZN => Godot
 
-inline Vector2f to_vec2f(Vector2i v) {
-	return Vector2f(v.x, v.y);
+template <typename T>
+inline Vector2i to_vec2i(const Vector2T<T> v) {
+	return Vector2i(v.x, v.y);
 }
 
 template <typename T>
-inline Vector3i to_vec3i(Vector3T<T> v) {
+inline Vector3i to_vec3i(const Vector3T<T> v) {
 	return Vector3i(v.x, v.y, v.z);
 }
 

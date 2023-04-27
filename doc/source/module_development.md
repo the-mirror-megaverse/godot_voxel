@@ -35,9 +35,17 @@ python build.py -a
 Layers
 -------
 
+### Main layers
+
+This module has 3 main layers:
+
+- Voxel: the voxel engine. Wrapped into `zylann::voxel::` namespace.
+- Util: library of functions, helpers and data structures, which does not depend on Voxel. Wrapped into `zylann::` namespace.
+- Thirdparty: third-party libraries.
+
 ### Folders
 
-The module is divided in several layers, each with different dependencies. Because of this, it is possible to use `VoxelMesher`, `VoxelGenerator` or `VoxelStream` standalone, without needing to use a `VoxelTerrain` node for example.
+The module is divided in several folders, each with different dependencies. Because of this, it is possible to use `VoxelMesher`, `VoxelGenerator` or `VoxelStream` standalone, without needing to use a `VoxelTerrain` node for example.
 
 Directory      | Description
 -------------- | -------------------------------------------------------------------------------------------------------
@@ -120,6 +128,7 @@ For the most part, use `clang-format` and follow Godot conventions.
 - Private wrapper functions can be used to adapt to the script API and are prefixed with `_b_`.
 - Use Clang-format to automate most of these rules (there should be a file included at the root of the C++ project)
 - Prefer comments with `//` only
+- Some virtual functions from wrapper classes are prefixed with `_zn_` to encapsulate signature differences when compiling as a module or as a GDExtension.
 
 ### File structure
 
@@ -128,7 +137,7 @@ For the most part, use `clang-format` and follow Godot conventions.
 - Constructors and destructors go on top
 - Public API goes on top, private stuff goes below
 - Bindings go at the bottom.
-- Avoid long lines. Preferred ruler is 120 characters. Don't fit too many operations on the same line, use locals.
+- Avoid long lines. Preferred maximum line length is 120 characters. Don't fit too many operations on the same line, use locals.
 - Defining types or functions in `.cpp` may be better for compilation times than in header if they are internal.
 
 ### C++ features
@@ -287,7 +296,11 @@ Profile with Tracy
 
 This module contains macros to profile specific code sections. By default, these macros expand to [Tracy Profiler](https://github.com/wolfpld/tracy) zones. It allows to check how long code takes to run, and displays it in a timeline.
 
+It was tested with Tracy 0.7.8.
+
 ![Tracy screenshot](images/tracy.webp)
+
+Alternative profilers are also mentionned in the [Godot docs](https://docs.godotengine.org/en/latest/contributing/development/debugging/using_cpp_profilers.html). They profile everything and appear to be based on CPU sampling, while Tracy is an instrumenting profiler providing specific, live results on a timeline.
 
 ### How to use profiler scopes
 
@@ -353,8 +366,8 @@ Once you are done profiling, don't forget to remove these lines, otherwise profi
 This way of integrating Tracy was based on this [commit by vblanco](https://github.com/vblanco20-1/godot/commit/2c5613abb8c9fdb5c4bfe3b52fdb665a91b43579)
 
 
-Compilation flags
-------------------
+Preprocessor macros
+---------------------
 
 The module has a few preprocessor macros that can be defined in order to turn off parts of the code getting compiled.
 Some can be specified through SCons command line parameters.

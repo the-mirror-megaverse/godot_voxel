@@ -8,20 +8,11 @@
 
 namespace zylann::voxel {
 
-#if defined(ZN_GODOT)
-bool VoxelInstanceLibraryMultiMeshItemInspectorPlugin::can_handle(Object *p_object) {
-#elif defined(ZN_GODOT_EXTENSION)
-bool VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_can_handle(const Variant &p_object_v) const {
-	Object *p_object = p_object_v;
-#endif
+bool VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_zn_can_handle(const Object *p_object) const {
 	return Object::cast_to<VoxelInstanceLibraryMultiMeshItem>(p_object) != nullptr;
 }
 
-#if defined(ZN_GODOT)
-void VoxelInstanceLibraryMultiMeshItemInspectorPlugin::parse_group(Object *p_object, const String &p_group) {
-#elif defined(ZN_GODOT_EXTENSION)
-void VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_parse_group(Object *p_object, const String &p_group) {
-#endif
+void VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_zn_parse_group(Object *p_object, const String &p_group) {
 	const VoxelInstanceLibraryMultiMeshItem *item = Object::cast_to<VoxelInstanceLibraryMultiMeshItem>(p_object);
 	ERR_FAIL_COND(item == nullptr);
 	if (item->get_scene().is_null()) {
@@ -64,14 +55,15 @@ void VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_parse_group(Object *p_ob
 	// }
 }
 
-#if defined(ZN_GODOT)
-bool VoxelInstanceLibraryMultiMeshItemInspectorPlugin::parse_property(Object *p_object, const Variant::Type p_type,
-		const String &p_path, const PropertyHint p_hint, const String &p_hint_text, const uint32_t p_usage,
-		const bool p_wide) {
-#elif defined(ZN_GODOT_EXTENSION)
-bool VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_parse_property(Object *p_object, int64_t p_type,
-		const String &p_path, int64_t p_hint, const String &p_hint_text, int64_t p_usage, const bool p_wide) {
-#endif
+bool VoxelInstanceLibraryMultiMeshItemInspectorPlugin::_zn_parse_property(Object *p_object, const Variant::Type p_type,
+		const String &p_path, const PropertyHint p_hint, const String &p_hint_text,
+		const BitField<PropertyUsageFlags> p_usage, const bool p_wide) {
+	// TODO Godot invokes `parse_property` on ALL editor plugins when inspecting items of an Array!
+	// See https://github.com/godotengine/godot/issues/71236
+	if (p_object == nullptr) {
+		// We don't care about non-object properties
+		return false;
+	}
 	// Hide manual properties if a scene is assigned, because it will override them
 	const VoxelInstanceLibraryMultiMeshItem *item = Object::cast_to<VoxelInstanceLibraryMultiMeshItem>(p_object);
 	ERR_FAIL_COND_V(item == nullptr, false);

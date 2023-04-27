@@ -15,29 +15,24 @@ class VoxelNode;
 class VoxelGraphEditorWindow;
 class VoxelGraphEditorIODialog;
 
-class VoxelGraphEditorPlugin : public EditorPlugin {
-	GDCLASS(VoxelGraphEditorPlugin, EditorPlugin)
+class VoxelGraphEditorPlugin : public ZN_EditorPlugin {
+	GDCLASS(VoxelGraphEditorPlugin, ZN_EditorPlugin)
 public:
 	VoxelGraphEditorPlugin();
-
-#if defined(ZN_GODOT)
-	bool handles(Object *p_object) const override;
-	void edit(Object *p_object) override;
-	void make_visible(bool visible) override;
-#elif defined(ZN_GODOT_EXTENSION)
-	bool _handles(const Variant &p_object_v) const override;
-	void _edit(const Variant &p_object_v) override;
-	void _make_visible(bool visible) override;
-#endif
 
 	void edit_ios(Ref<pg::VoxelGraphFunction> graph);
 
 private:
+	bool _zn_handles(const Object *p_object) const override;
+	void _zn_edit(Object *p_object) override;
+	void _zn_make_visible(bool visible) override;
+
 	void _notification(int p_what);
 
 	void undock_graph_editor();
 	void dock_graph_editor();
 	void update_graph_editor_window_title();
+	void inspect_graph_or_generator(const VoxelGraphEditor &graph_editor);
 
 	void _on_graph_editor_node_selected(uint32_t node_id);
 	void _on_graph_editor_nothing_selected();
@@ -56,6 +51,15 @@ private:
 	bool _deferred_visibility_scheduled = false;
 	VoxelNode *_voxel_node = nullptr;
 	std::vector<Ref<VoxelGraphNodeInspectorWrapper>> _node_wrappers;
+	// Workaround for a new Godot 4 behavior:
+	// When we inspect an object, Godot calls `edit(nullptr)` on our plugin first.
+	// But this plugin handles both the graph resource, and nodes in it. When a node is selected, it tells Godot to
+	// inspect an associated object, so the inspector can be used to edit properties of the node.
+	// But with the new `edit(nullptr)` behavior, the plugin cleans up its UI, which destroys the UI GraphNode you
+	// selected, leading to nasty crashes and errors...
+	// Since this boils down to the plugin triggering a change in inspected object, we set a boolean to IGNORE
+	// `edit(nullptr)` calls.
+	bool _ignore_edit_null = false;
 };
 
 } // namespace zylann::voxel

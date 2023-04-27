@@ -11,7 +11,7 @@ namespace zylann::voxel {
 
 VoxelDataMap::VoxelDataMap() {
 	// This is not planned to change at runtime at the moment.
-	//set_block_size_pow2(constants::DEFAULT_BLOCK_SIZE_PO2);
+	// set_block_size_pow2(constants::DEFAULT_BLOCK_SIZE_PO2);
 }
 
 VoxelDataMap::~VoxelDataMap() {
@@ -21,7 +21,7 @@ VoxelDataMap::~VoxelDataMap() {
 void VoxelDataMap::create(unsigned int lod_index) {
 	ZN_ASSERT(lod_index < constants::MAX_LOD);
 	clear();
-	//set_block_size_pow2(block_size_po2);
+	// set_block_size_pow2(block_size_po2);
 	set_lod_index(lod_index);
 }
 
@@ -58,7 +58,7 @@ int VoxelDataMap::get_voxel(Vector3i pos, unsigned int c) const {
 VoxelDataBlock *VoxelDataMap::create_default_block(Vector3i bpos) {
 	std::shared_ptr<VoxelBufferInternal> buffer = make_shared_instance<VoxelBufferInternal>();
 	buffer->create(get_block_size(), get_block_size(), get_block_size());
-	//buffer->set_default_values(_default_voxel);
+	// buffer->set_default_values(_default_voxel);
 #ifdef DEBUG_ENABLED
 	ZN_ASSERT_RETURN_V(!has_block(bpos), nullptr);
 #endif
@@ -193,6 +193,7 @@ bool VoxelDataMap::is_block_surrounded(Vector3i pos) const {
 
 void VoxelDataMap::copy(Vector3i min_pos, VoxelBufferInternal &dst_buffer, unsigned int channels_mask,
 		void *callback_data, void (*gen_func)(void *, VoxelBufferInternal &, Vector3i)) const {
+	ZN_ASSERT_RETURN_MSG(Vector3iUtil::get_volume(dst_buffer.get_size()) > 0, "The area to copy is empty");
 	const Vector3i max_pos = min_pos + dst_buffer.get_size();
 
 	const Vector3i min_block_pos = voxel_to_block(min_pos);
@@ -252,7 +253,7 @@ void VoxelDataMap::copy(Vector3i min_pos, VoxelBufferInternal &dst_buffer, unsig
 }
 
 void VoxelDataMap::paste(Vector3i min_pos, const VoxelBufferInternal &src_buffer, unsigned int channels_mask,
-		bool use_mask, uint64_t mask_value, bool create_new_blocks) {
+		bool use_mask, uint8_t mask_channel, uint64_t mask_value, bool create_new_blocks) {
 	//
 	const Vector3i max_pos = min_pos + src_buffer.get_size();
 
@@ -290,14 +291,27 @@ void VoxelDataMap::paste(Vector3i min_pos, const VoxelBufferInternal &src_buffer
 
 						const Vector3i src_offset = -dst_box.pos;
 
-						dst_buffer.read_write_action(dst_box, channel,
-								[&src_buffer, mask_value, src_offset, channel](const Vector3i pos, uint64_t dst_v) {
-									const uint64_t src_v = src_buffer.get_voxel(pos + src_offset, channel);
-									if (src_v == mask_value) {
-										return dst_v;
-									}
-									return src_v;
-								});
+						if (channel == mask_channel) {
+							dst_buffer.read_write_action(dst_box, channel,
+									[&src_buffer, mask_value, src_offset, channel](const Vector3i pos, uint64_t dst_v) {
+										const uint64_t src_v = src_buffer.get_voxel(pos + src_offset, channel);
+										if (src_v == mask_value) {
+											return dst_v;
+										}
+										return src_v;
+									});
+						} else {
+							dst_buffer.read_write_action(dst_box, channel,
+									[&src_buffer, mask_value, src_offset, channel, mask_channel](
+											const Vector3i pos, uint64_t dst_v) {
+										const uint64_t mv = src_buffer.get_voxel(pos + src_offset, mask_channel);
+										if (mv == mask_value) {
+											return dst_v;
+										}
+										const uint64_t src_v = src_buffer.get_voxel(pos + src_offset, channel);
+										return src_v;
+									});
+						}
 
 					} else {
 						dst_buffer.copy_from(

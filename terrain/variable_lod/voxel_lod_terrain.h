@@ -247,6 +247,7 @@ protected:
 	void _notification(int p_what);
 
 	void _on_gi_mode_changed() override;
+	void _on_shadow_casting_changed() override;
 
 private:
 	void process(float delta);
@@ -412,7 +413,7 @@ private:
 
 } // namespace zylann::voxel
 
-ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain, ProcessCallback)
-ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain, DebugDrawFlag)
+VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain::ProcessCallback)
+VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain::DebugDrawFlag)
 
 #endif // VOXEL_LOD_TERRAIN_HPP

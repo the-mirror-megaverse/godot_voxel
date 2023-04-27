@@ -266,10 +266,48 @@ void VoxelTool::copy(Vector3i pos, Ref<gd::VoxelBuffer> dst, uint8_t channel_mas
 	ERR_PRINT("Not implemented");
 }
 
-void VoxelTool::paste(
-		Vector3i p_pos, Ref<gd::VoxelBuffer> p_voxels, uint8_t channels_mask, bool use_mask, uint64_t mask_value) {
+void VoxelTool::paste(Vector3i p_pos, Ref<gd::VoxelBuffer> p_voxels, uint8_t channels_mask) {
 	ERR_FAIL_COND(p_voxels.is_null());
 	ERR_PRINT("Not implemented");
+}
+
+void VoxelTool::paste_masked(Vector3i p_pos, Ref<gd::VoxelBuffer> p_voxels, uint8_t channels_mask, uint8_t mask_channel,
+		uint64_t mask_value) {
+	ERR_FAIL_COND(p_voxels.is_null());
+	ERR_PRINT("Not implemented");
+}
+
+void VoxelTool::smooth_sphere(Vector3 sphere_center, float sphere_radius, int blur_radius) {
+	ZN_PROFILE_SCOPE();
+	ZN_ASSERT_RETURN(blur_radius >= 1 && blur_radius <= 64);
+	ZN_ASSERT_RETURN(sphere_radius >= 0.01f);
+
+	const Box3i voxel_box = Box3i::from_min_max(
+			math::floor_to_int(sphere_center - Vector3(sphere_radius, sphere_radius, sphere_radius)),
+			math::ceil_to_int(sphere_center + Vector3(sphere_radius, sphere_radius, sphere_radius)));
+
+	const Box3i padded_voxel_box = voxel_box.padded(blur_radius);
+
+	// TODO Perhaps should implement `copy` and `paste` with `VoxelBufferInternal` so Godot object wrappers wouldn't be
+	// necessary
+	Ref<gd::VoxelBuffer> buffer;
+	buffer.instantiate();
+	buffer->create(padded_voxel_box.size.x, padded_voxel_box.size.y, padded_voxel_box.size.z);
+
+	if (_channel == VoxelBufferInternal::CHANNEL_SDF) {
+		// Note, this only applies to SDF. It won't blur voxel texture data.
+
+		copy(padded_voxel_box.pos, buffer, (1 << VoxelBufferInternal::CHANNEL_SDF));
+
+		std::shared_ptr<VoxelBufferInternal> smooth_buffer = make_shared_instance<VoxelBufferInternal>();
+		const Vector3f relative_sphere_center = to_vec3f(sphere_center - to_vec3(voxel_box.pos));
+		ops::box_blur(buffer->get_buffer(), *smooth_buffer, blur_radius, relative_sphere_center, sphere_radius);
+
+		paste(voxel_box.pos, gd::VoxelBuffer::create_shared(smooth_buffer), (1 << VoxelBufferInternal::CHANNEL_SDF));
+
+	} else {
+		ERR_PRINT("Not implemented");
+	}
 }
 
 bool VoxelTool::is_area_editable(const Box3i &box) const {
@@ -326,9 +364,13 @@ void VoxelTool::_b_copy(Vector3i pos, Ref<gd::VoxelBuffer> voxels, int channel_m
 	copy(pos, voxels, channel_mask);
 }
 
-void VoxelTool::_b_paste(Vector3i pos, Ref<gd::VoxelBuffer> voxels, int channels_mask, int64_t mask_value) {
-	// TODO May need two functions, one masked, one not masked, or add a parameter, but it breaks compat
-	paste(pos, voxels, channels_mask, mask_value > 0xffffffff, mask_value);
+void VoxelTool::_b_paste(Vector3i pos, Ref<gd::VoxelBuffer> voxels, int channels_mask) {
+	paste(pos, voxels, channels_mask);
+}
+
+void VoxelTool::_b_paste_masked(
+		Vector3i pos, Ref<gd::VoxelBuffer> voxels, int channels_mask, int mask_channel, int64_t mask_value) {
+	paste_masked(pos, voxels, channels_mask, mask_channel, mask_value);
 }
 
 Variant VoxelTool::_b_get_voxel_metadata(Vector3i pos) const {
@@ -345,6 +387,33 @@ bool VoxelTool::_b_is_area_editable(AABB box) const {
 
 static int _b_color_to_u16(Color col) {
 	return Color8(col).to_u16();
+}
+
+static int _b_vec4i_to_u16_indices(Vector4i v) {
+	return encode_indices_to_packed_u16(v.x, v.y, v.z, v.w);
+}
+
+static int _b_color_to_u16_weights(Color cf) {
+	const Color8 c(cf);
+	return encode_weights_to_packed_u16_lossy(c.r, c.g, c.b, c.a);
+}
+
+static Vector4i _b_u16_indices_to_vec4i(int e) {
+	FixedArray<uint8_t, 4> indices = decode_indices_from_packed_u16(e);
+	return Vector4i(indices[0], indices[1], indices[2], indices[3]);
+}
+
+static Color _b_u16_weights_to_color(int e) {
+	FixedArray<uint8_t, 4> indices = decode_weights_from_packed_u16(e);
+	return Color(indices[0] / 255.f, indices[1] / 255.f, indices[2] / 255.f, indices[3] / 255.f);
+}
+
+static Color _b_normalize_color(Color c) {
+	const float sum = c.r + c.g + c.b + c.a;
+	if (sum < 0.00001f) {
+		return Color();
+	}
+	return c / sum;
 }
 
 void VoxelTool::_b_set_channel(gd::VoxelBuffer::ChannelId p_channel) {
@@ -391,19 +460,34 @@ void VoxelTool::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("do_sphere", "center", "radius"), &VoxelTool::_b_do_sphere);
 	ClassDB::bind_method(D_METHOD("do_box", "begin", "end"), &VoxelTool::_b_do_box);
 
+	ClassDB::bind_method(
+			D_METHOD("smooth_sphere", "sphere_center", "sphere_radius", "blur_radius"), &VoxelTool::smooth_sphere);
+
 	ClassDB::bind_method(D_METHOD("set_voxel_metadata", "pos", "meta"), &VoxelTool::_b_set_voxel_metadata);
 	ClassDB::bind_method(D_METHOD("get_voxel_metadata", "pos"), &VoxelTool::_b_get_voxel_metadata);
 
 	ClassDB::bind_method(D_METHOD("copy", "src_pos", "dst_buffer", "channels_mask"), &VoxelTool::_b_copy);
+	ClassDB::bind_method(D_METHOD("paste", "dst_pos", "src_buffer", "channels_mask"), &VoxelTool::_b_paste);
 	ClassDB::bind_method(
-			D_METHOD("paste", "dst_pos", "src_buffer", "channels_mask", "src_mask_value"), &VoxelTool::_b_paste);
+			D_METHOD("paste_masked", "dst_pos", "src_buffer", "channels_mask", "mask_channel", "mask_value"),
+			&VoxelTool::_b_paste_masked);
 
 	ClassDB::bind_method(D_METHOD("raycast", "origin", "direction", "max_distance", "collision_mask"),
 			&VoxelTool::_b_raycast, DEFVAL(10.0), DEFVAL(0xffffffff));
 
 	ClassDB::bind_method(D_METHOD("is_area_editable", "box"), &VoxelTool::_b_is_area_editable);
 
+	// Encoding helpers
 	ClassDB::bind_static_method(VoxelTool::get_class_static(), D_METHOD("color_to_u16", "color"), &_b_color_to_u16);
+	ClassDB::bind_static_method(
+			VoxelTool::get_class_static(), D_METHOD("vec4i_to_u16_indices"), &_b_vec4i_to_u16_indices);
+	ClassDB::bind_static_method(
+			VoxelTool::get_class_static(), D_METHOD("color_to_u16_weights"), &_b_color_to_u16_weights);
+	ClassDB::bind_static_method(
+			VoxelTool::get_class_static(), D_METHOD("u16_indices_to_vec4i"), &_b_u16_indices_to_vec4i);
+	ClassDB::bind_static_method(
+			VoxelTool::get_class_static(), D_METHOD("u16_weights_to_color"), &_b_u16_weights_to_color);
+	ClassDB::bind_static_method(VoxelTool::get_class_static(), D_METHOD("normalize_color"), &_b_normalize_color);
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "value"), "set_value", "get_value");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "channel", PROPERTY_HINT_ENUM, gd::VoxelBuffer::CHANNEL_ID_HINT_STRING),

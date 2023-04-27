@@ -15,6 +15,8 @@
 #include "../../util/godot/classes/base_material_3d.h" // For property hint in release mode in GDExtension...
 #include "../../util/godot/classes/concave_polygon_shape_3d.h"
 #include "../../util/godot/classes/engine.h"
+#include "../../util/godot/classes/multiplayer_api.h"
+#include "../../util/godot/classes/multiplayer_peer.h"
 #include "../../util/godot/classes/scene_tree.h"
 #include "../../util/godot/classes/script.h"
 #include "../../util/godot/classes/shader_material.h"
@@ -29,6 +31,8 @@
 #include "../instancing/voxel_instancer.h"
 #include "../voxel_data_block_enter_info.h"
 #include "../voxel_save_completion_tracker.h"
+#include "voxel_terrain_multiplayer_synchronizer.h"
+
 #ifdef TOOLS_ENABLED
 #include "../../meshers/transvoxel/voxel_mesher_transvoxel.h"
 #endif
@@ -262,6 +266,13 @@ void VoxelTerrain::_on_gi_mode_changed() {
 	const GIMode gi_mode = get_gi_mode();
 	_mesh_map.for_each_block([gi_mode](VoxelMeshBlockVT &block) { //
 		block.set_gi_mode(DirectMeshInstance::GIMode(gi_mode));
+	});
+}
+
+void VoxelTerrain::_on_shadow_casting_changed() {
+	const RenderingServer::ShadowCastingSetting mode = RenderingServer::ShadowCastingSetting(get_shadow_casting());
+	_mesh_map.for_each_block([mode](VoxelMeshBlockVT &block) { //
+		block.set_shadow_casting(mode);
 	});
 }
 
@@ -687,12 +698,17 @@ void VoxelTerrain::post_edit_area(Box3i box_in_voxels) {
 
 	box_in_voxels.clip(_data->get_bounds());
 
+	// TODO Maybe remove this in preference for multiplayer synchronizer virtual functions?
 	if (_area_edit_notification_enabled) {
 #if defined(ZN_GODOT)
 		GDVIRTUAL_CALL(_on_area_edited, box_in_voxels.pos, box_in_voxels.size);
 #else
 		ERR_PRINT_ONCE("VoxelTerrain::_on_area_edited is not supported yet in GDExtension!");
 #endif
+	}
+
+	if (_multiplayer_synchronizer != nullptr && _multiplayer_synchronizer->is_server()) {
+		_multiplayer_synchronizer->send_area(box_in_voxels);
 	}
 
 	try_schedule_mesh_update_from_data(box_in_voxels);
@@ -923,17 +939,24 @@ void VoxelTerrain::notify_data_block_enter(const VoxelDataBlock &block, Vector3i
 	if (_data_block_enter_info_obj == nullptr) {
 		_data_block_enter_info_obj = gd_make_unique<VoxelDataBlockEnterInfo>();
 	}
-	_data_block_enter_info_obj->network_peer_id = VoxelEngine::get_singleton().get_viewer_network_peer_id(viewer_id);
+	const int network_peer_id = VoxelEngine::get_singleton().get_viewer_network_peer_id(viewer_id);
+	_data_block_enter_info_obj->network_peer_id = network_peer_id;
 	_data_block_enter_info_obj->voxel_block = block;
 	_data_block_enter_info_obj->block_position = bpos;
 
 #if defined(ZN_GODOT)
-	if (!GDVIRTUAL_CALL(_on_data_block_entered, _data_block_enter_info_obj.get())) {
+	if (!GDVIRTUAL_CALL(_on_data_block_entered, _data_block_enter_info_obj.get()) &&
+			_multiplayer_synchronizer == nullptr) {
 		WARN_PRINT_ONCE("VoxelTerrain::_on_data_block_entered is unimplemented!");
 	}
 #else
 	ERR_PRINT_ONCE("VoxelTerrain::_on_data_block_entered is not supported yet in GDExtension!");
 #endif
+
+	if (_multiplayer_synchronizer != nullptr && !Engine::get_singleton()->is_editor_hint() &&
+			network_peer_id != MultiplayerPeer::TARGET_PEER_SERVER && _multiplayer_synchronizer->is_server()) {
+		_multiplayer_synchronizer->send_block(network_peer_id, block, bpos);
+	}
 }
 
 void VoxelTerrain::process() {
@@ -958,11 +981,17 @@ void VoxelTerrain::process_viewers() {
 		for (size_t i = 0; i < _paired_viewers.size(); ++i) {
 			PairedViewer &p = _paired_viewers[i];
 			if (!VoxelEngine::get_singleton().viewer_exists(p.id)) {
-				ZN_PRINT_VERBOSE("Detected destroyed viewer in VoxelTerrain");
+				ZN_PRINT_VERBOSE(format("Detected destroyed viewer {} in VoxelTerrain", p.id));
 				// Interpret removal as nullified view distance so the same code handling loading of blocks
 				// will be used to unload those viewed by this viewer.
 				// We'll actually remove unpaired viewers in a second pass.
 				p.state.view_distance_voxels = 0;
+				// Also update boxes, they won't be updated since the viewer has been removed.
+				// Assign prev state, otherwise in some cases resetting boxes would make them equal to prev state,
+				// therefore causing no unload
+				p.prev_state = p.state;
+				p.state.data_box = Box3i();
+				p.state.mesh_box = Box3i();
 				unpaired_viewer_indexes.push_back(i);
 			}
 		}
@@ -989,10 +1018,12 @@ void VoxelTerrain::process_viewers() {
 			inline void operator()(ViewerID viewer_id, const VoxelEngine::Viewer &viewer) {
 				size_t paired_viewer_index;
 				if (!self.try_get_paired_viewer_index(viewer_id, paired_viewer_index)) {
+					// New viewer
 					PairedViewer p;
 					p.id = viewer_id;
 					paired_viewer_index = self._paired_viewers.size();
 					self._paired_viewers.push_back(p);
+					ZN_PRINT_VERBOSE(format("Pairing viewer {} to VoxelTerrain", viewer_id));
 				}
 
 				PairedViewer &paired_viewer = self._paired_viewers[paired_viewer_index];
@@ -1043,14 +1074,16 @@ void VoxelTerrain::process_viewers() {
 			}
 		};
 
-		// New viewers and updates
+		// New viewers and updates. Removed viewers won't be iterated but are still paired until later.
 		UpdatePairedViewer u{ *this, bounds_in_data_blocks, bounds_in_mesh_blocks, world_to_local_transform,
 			view_distance_scale };
 		VoxelEngine::get_singleton().for_each_viewer(u);
 	}
 
 	const bool can_load_blocks =
-			(_automatic_loading_enabled && (get_stream().is_valid() || get_generator().is_valid())) &&
+			((_automatic_loading_enabled &&
+					 (_multiplayer_synchronizer == nullptr || _multiplayer_synchronizer->is_server())) &&
+					(get_stream().is_valid() || get_generator().is_valid())) &&
 			(Engine::get_singleton()->is_editor_hint() == false || _run_stream_in_editor);
 
 	// Find out which blocks need to appear and which need to be unloaded
@@ -1075,6 +1108,10 @@ void VoxelTerrain::process_viewers() {
 
 				if (prev_mesh_box != new_mesh_box) {
 					ZN_PROFILE_SCOPE();
+
+					// TODO Any reason to unview old blocks before viewing new blocks?
+					// Because if a viewer is removed and another is added, it will reload the whole area even if their
+					// box is the same.
 
 					// Unview blocks that just fell out of range
 					prev_mesh_box.difference(new_mesh_box, [this, &viewer](Box3i out_of_range_box) {
@@ -1131,9 +1168,10 @@ void VoxelTerrain::process_viewers() {
 
 	// We no longer need unpaired viewers.
 	for (size_t i = 0; i < unpaired_viewer_indexes.size(); ++i) {
-		ZN_PRINT_VERBOSE("Unpairing viewer from VoxelTerrain");
-		// Iterating backward so indexes of paired viewers will not change because of the removal
+		// Iterating backward so indexes of paired viewers that need removal will not change because of the removal
+		// itself
 		const size_t vi = unpaired_viewer_indexes[unpaired_viewer_indexes.size() - i - 1];
+		ZN_PRINT_VERBOSE(format("Unpairing viewer {} from VoxelTerrain", _paired_viewers[vi].id));
 		_paired_viewers[vi] = _paired_viewers.back();
 		_paired_viewers.pop_back();
 	}
@@ -1152,11 +1190,15 @@ void VoxelTerrain::process_viewers() {
 void VoxelTerrain::process_viewer_data_box_change(
 		ViewerID viewer_id, Box3i prev_data_box, Box3i new_data_box, bool can_load_blocks) {
 	ZN_PROFILE_SCOPE();
+	ZN_ASSERT_RETURN(prev_data_box != new_data_box);
 
 	static thread_local std::vector<Vector3i> tls_missing_blocks;
 	static thread_local std::vector<Vector3i> tls_found_blocks_positions;
 
 	// Unview blocks that just fell out of range
+	//
+	// TODO Any reason to unview old blocks before viewing new blocks?
+	// Because if a viewer is removed and another is added, it will reload the whole area even if their box is the same.
 	{
 		const bool may_save =
 				get_stream().is_valid() && (!Engine::get_singleton()->is_editor_hint() || _run_stream_in_editor);
@@ -1166,6 +1208,7 @@ void VoxelTerrain::process_viewer_data_box_change(
 
 		// Decrement refcounts from loaded blocks, and unload them
 		prev_data_box.difference(new_data_box, [this, may_save](Box3i out_of_range_box) {
+			// ZN_PRINT_VERBOSE(format("Unview data box {}", out_of_range_box));
 			_data->unview_area(out_of_range_box, tls_missing_blocks, tls_found_blocks_positions,
 					may_save ? &_blocks_to_save : nullptr);
 		});
@@ -1206,7 +1249,10 @@ void VoxelTerrain::process_viewer_data_box_change(
 
 	// View blocks coming into range
 	if (can_load_blocks) {
-		const bool require_notifications = _block_enter_notification_enabled &&
+		const bool require_notifications =
+				(_block_enter_notification_enabled ||
+						(_multiplayer_synchronizer != nullptr && _multiplayer_synchronizer->is_server())) &&
+				VoxelEngine::get_singleton().viewer_exists(viewer_id) && // Could be a destroyed viewer
 				VoxelEngine::get_singleton().is_viewer_requiring_data_block_notifications(viewer_id);
 
 		static thread_local std::vector<VoxelDataBlock> tls_found_blocks;
@@ -1216,6 +1262,7 @@ void VoxelTerrain::process_viewer_data_box_change(
 		tls_found_blocks_positions.clear();
 
 		new_data_box.difference(prev_data_box, [this](Box3i box_to_load) {
+			// ZN_PRINT_VERBOSE(format("View data box {}", box_to_load));
 			_data->view_area(box_to_load, tls_missing_blocks, tls_found_blocks_positions, tls_found_blocks);
 		});
 
@@ -1255,6 +1302,10 @@ void VoxelTerrain::process_viewer_data_box_change(
 				notify_data_block_enter(block, bpos, viewer_id);
 			}
 		}
+
+		// Make sure to clear this because it holds refcounted stuff. If we don't, it could crash on exit because the
+		// voxel engine deinitializes its stuff before thread_locals get destroyed
+		tls_found_blocks.clear();
 
 		// TODO viewers with varying flags during the game is not supported at the moment.
 		// They have to be re-created, which may cause world re-load...
@@ -1323,7 +1374,7 @@ void VoxelTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob) {
 	}
 
 	_data->try_set_block(
-			block_pos, block, [&block](VoxelDataBlock &existing_block, const VoxelDataBlock &incoming_block) {
+			block_pos, block, [](VoxelDataBlock &existing_block, const VoxelDataBlock &incoming_block) {
 				existing_block.set_voxels(incoming_block.get_voxels_shared());
 				existing_block.set_edited(incoming_block.is_edited());
 			});
@@ -1380,6 +1431,7 @@ bool VoxelTerrain::try_set_block_data(Vector3i position, std::shared_ptr<VoxelBu
 		// Actually, this block is not even in range. So we may ignore it.
 		// If we don't want this behavior, we could introduce a fake viewer that adds a reference to all blocks in
 		// this volume as long as it is enabled?
+		ZN_PRINT_VERBOSE("Trying to set a data block outside of any viewer range");
 		return false;
 	}
 
@@ -1393,7 +1445,7 @@ bool VoxelTerrain::try_set_block_data(Vector3i position, std::shared_ptr<VoxelBu
 
 	// Create or update block data
 	_data->try_set_block(
-			position, block, [&block](VoxelDataBlock &existing_block, const VoxelDataBlock &incoming_block) {
+			position, block, [](VoxelDataBlock &existing_block, const VoxelDataBlock &incoming_block) {
 				existing_block.set_voxels(incoming_block.get_voxels_shared());
 				existing_block.set_edited(incoming_block.is_edited());
 			});
@@ -1554,7 +1606,8 @@ void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 		}
 	}
 
-	block->set_mesh(mesh, DirectMeshInstance::GIMode(get_gi_mode()));
+	block->set_mesh(mesh, DirectMeshInstance::GIMode(get_gi_mode()),
+			RenderingServer::ShadowCastingSetting(get_shadow_casting()));
 
 	if (_material_override.is_valid()) {
 		block->set_material_override(_material_override);
@@ -1636,6 +1689,14 @@ Box3i VoxelTerrain::get_bounds() const {
 	return _data->get_bounds();
 }
 
+void VoxelTerrain::set_multiplayer_synchronizer(VoxelTerrainMultiplayerSynchronizer *synchronizer) {
+	_multiplayer_synchronizer = synchronizer;
+}
+
+const VoxelTerrainMultiplayerSynchronizer *VoxelTerrain::get_multiplayer_synchronizer() const {
+	return _multiplayer_synchronizer;
+}
+
 Vector3i VoxelTerrain::_b_voxel_to_data_block(Vector3 pos) const {
 	return _data->voxel_to_block(math::floor_to_int(pos));
 }
@@ -1674,6 +1735,7 @@ bool VoxelTerrain::_b_try_set_block_data(Vector3i position, Ref<gd::VoxelBuffer>
 	std::shared_ptr<VoxelBufferInternal> buffer = voxel_data->get_buffer_shared();
 
 #ifdef DEBUG_ENABLED
+	// It is not allowed to call this function at two different positions with the same voxel buffer
 	const StringName &key = VoxelStringNames::get_singleton()._voxel_debug_vt_position;
 	if (voxel_data->has_meta(key)) {
 		const Vector3i meta_pos = voxel_data->get_meta(key);

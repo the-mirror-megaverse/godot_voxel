@@ -3,15 +3,18 @@
 #include "../generators/graph/voxel_generator_graph.h"
 #include "../storage/voxel_buffer_internal.h"
 #include "../util/container_funcs.h"
+#include "../util/math/conv.h"
 #include "../util/math/sdf.h"
 #include "../util/noise/fast_noise_lite/fast_noise_lite.h"
 #include "../util/string_funcs.h"
+#include "test_util.h"
 #include "testing.h"
 
 #ifdef VOXEL_ENABLE_FAST_NOISE_2
 #include "../util/noise/fast_noise_2.h"
 #endif
 
+#include <core/io/resource_loader.h>
 #include <modules/noise/fastnoise_lite.h>
 
 namespace zylann::voxel::tests {
@@ -620,7 +623,7 @@ void test_voxel_graph_equivalence_merging() {
 	}
 }
 
-/*void print_sdf_as_ascii(const VoxelBufferInternal &vb) {
+void print_sdf_as_ascii(const VoxelBufferInternal &vb) {
 	Vector3i pos;
 	const VoxelBufferInternal::ChannelId channel = VoxelBufferInternal::CHANNEL_SDF;
 	for (pos.y = 0; pos.y < vb.get_size().y; ++pos.y) {
@@ -656,7 +659,7 @@ void test_voxel_graph_equivalence_merging() {
 			println(s);
 		}
 	}
-}*/
+}
 
 /*bool find_different_voxel(const VoxelBufferInternal &vb1, const VoxelBufferInternal &vb2, Vector3i *out_pos,
 		unsigned int *out_channel_index) {
@@ -684,46 +687,6 @@ void test_voxel_graph_equivalence_merging() {
 	}
 	return false;
 }*/
-
-bool sd_equals_approx(const VoxelBufferInternal &vb1, const VoxelBufferInternal &vb2) {
-	const VoxelBufferInternal::ChannelId channel = VoxelBufferInternal::CHANNEL_SDF;
-	const VoxelBufferInternal::Depth depth = vb1.get_channel_depth(channel);
-	// const float error_margin = 1.1f * VoxelBufferInternal::get_sdf_quantization_scale(depth);
-	// There can be a small difference due to scaling operations, so instead of an exact equality, we check approximate
-	// equality.
-	Vector3i pos;
-	for (pos.y = 0; pos.y < vb1.get_size().y; ++pos.y) {
-		for (pos.z = 0; pos.z < vb1.get_size().z; ++pos.z) {
-			for (pos.x = 0; pos.x < vb1.get_size().x; ++pos.x) {
-				switch (depth) {
-					case VoxelBufferInternal::DEPTH_8_BIT: {
-						const int sd1 = int8_t(vb1.get_voxel(pos, channel));
-						const int sd2 = int8_t(vb2.get_voxel(pos, channel));
-						if (Math::abs(sd1 - sd2) > 1) {
-							return false;
-						}
-					} break;
-					case VoxelBufferInternal::DEPTH_16_BIT: {
-						const int sd1 = int16_t(vb1.get_voxel(pos, channel));
-						const int sd2 = int16_t(vb2.get_voxel(pos, channel));
-						if (Math::abs(sd1 - sd2) > 1) {
-							return false;
-						}
-					} break;
-					case VoxelBufferInternal::DEPTH_32_BIT:
-					case VoxelBufferInternal::DEPTH_64_BIT: {
-						const float sd1 = vb1.get_voxel_f(pos, channel);
-						const float sd2 = vb2.get_voxel_f(pos, channel);
-						if (!Math::is_equal_approx(sd1, sd2)) {
-							return false;
-						}
-					} break;
-				}
-			}
-		}
-	}
-	return true;
-}
 
 void test_voxel_graph_generate_block_with_input_sdf() {
 	static const int BLOCK_SIZE = 16;
@@ -1384,6 +1347,436 @@ void test_voxel_graph_issue471() {
 	// Was crashing because input definition wasn't fulfilled (the graph is empty). It should fail with an error.
 	VoxelGenerator::ShaderSourceData ssd;
 	generator->get_shader_source(ssd);
+}
+
+// There was a bug where generating a usual height-based terrain with also a texture output, random blocks fully or
+// partially filled with air would occur underground where such blocks should have been filled with matter. It only
+// happened if the texture output node was present. The cause was that the generator detected and filled the SDF early
+// with matter, for blocks far enough from the surface. But because there was also a texture output, the generator
+// proceeded to still run the graph to just get volumetric texture data (which is expected) but then overwrote SDF with
+// results it did not calculate, effectively filling SDF with garbage.
+void test_voxel_graph_unused_single_texture_output() {
+	Ref<VoxelGeneratorGraph> generator;
+	generator.instantiate();
+
+	{
+		//               Plane
+		//                    \
+		// Noise2D --- Mul --- Sub --- OutSDF
+		//
+		//                             OutSingleTexture
+
+		// Slightly bumpy ground around Y=0, not going higher than 10 or lower than -10 voxels.
+
+		Ref<VoxelGraphFunction> func = generator->get_main_function();
+		ZN_ASSERT(func.is_valid());
+
+		const uint32_t n_out_sdf = func->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF, Vector2());
+		const uint32_t n_plane = func->create_node(VoxelGraphFunction::NODE_SDF_PLANE, Vector2());
+
+		const uint32_t n_noise = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2());
+		Ref<ZN_FastNoiseLite> fnl;
+		fnl.instantiate();
+		fnl->set_period(1024);
+		fnl->set_fractal_type(ZN_FastNoiseLite::FRACTAL_RIDGED);
+		fnl->set_fractal_octaves(5);
+		func->set_node_param(n_noise, 0, fnl);
+
+		const uint32_t n_mul = func->create_node(VoxelGraphFunction::NODE_MULTIPLY, Vector2());
+		func->set_node_default_input(n_mul, 1, 10.0);
+
+		const uint32_t n_sub = func->create_node(VoxelGraphFunction::NODE_SUBTRACT, Vector2());
+
+		const uint32_t n_out_single_texture =
+				func->create_node(VoxelGraphFunction::NODE_OUTPUT_SINGLE_TEXTURE, Vector2());
+
+		func->add_connection(n_plane, 0, n_sub, 0);
+		func->add_connection(n_noise, 0, n_mul, 0);
+		func->add_connection(n_mul, 0, n_sub, 1);
+		func->add_connection(n_sub, 0, n_out_sdf, 0);
+	}
+
+	CompilationResult result = generator->compile(false);
+	ZN_TEST_ASSERT(result.success);
+
+	std::vector<Vector3i> block_positions;
+	{
+		Vector3i bpos;
+		for (bpos.z = -4; bpos.z < 4; ++bpos.z) {
+			for (bpos.x = -4; bpos.x < 4; ++bpos.x) {
+				for (bpos.y = -4; bpos.y < 4; ++bpos.y) {
+					block_positions.push_back(bpos);
+				}
+			}
+		}
+
+		struct Comparer {
+			inline bool operator()(const Vector3i a, const Vector3i b) const {
+				return math::length(to_vec3f(a)) < math::length(to_vec3f(b));
+			}
+		};
+		SortArray<Vector3i, Comparer> sorter;
+		sorter.sort(block_positions.data(), block_positions.size());
+	}
+
+	VoxelBufferInternal voxels;
+	const int BLOCK_SIZE = 16;
+	const int MIN_MARGIN = 1;
+	const int MAX_MARGIN = 2;
+	voxels.create(Vector3iUtil::create(BLOCK_SIZE + MIN_MARGIN + MAX_MARGIN));
+
+	for (const Vector3i bpos : block_positions) {
+		const Vector3i origin_in_voxels = bpos * BLOCK_SIZE - Vector3iUtil::create(MIN_MARGIN);
+		generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels, origin_in_voxels, 0 });
+
+		if (bpos.y <= -2) {
+			// We expect only ground below this height (in block coordinates)
+			for (int z = 0; z < voxels.get_size().z; ++z) {
+				for (int x = 0; x < voxels.get_size().x; ++x) {
+					for (int y = 0; y < voxels.get_size().y; ++y) {
+						const float sd = voxels.get_voxel_f(x, y, z, VoxelBufferInternal::CHANNEL_SDF);
+
+						if (sd >= 0.f) {
+							print_sdf_as_ascii(voxels);
+						}
+
+						ZN_TEST_ASSERT(sd < 0.f);
+					}
+				}
+			}
+		} else if (bpos.y >= 1) {
+			// We expect only air above this height (in block coordinates)
+			for (int z = 0; z < voxels.get_size().z; ++z) {
+				for (int x = 0; x < voxels.get_size().x; ++x) {
+					for (int y = 0; y < voxels.get_size().y; ++y) {
+						const float sd = voxels.get_voxel_f(x, y, z, VoxelBufferInternal::CHANNEL_SDF);
+						ZN_TEST_ASSERT(sd > 0.f);
+					}
+				}
+			}
+		}
+	}
+}
+
+// There was a bug where texture indices selected using a Spots2D node were returning garbage in areas that were
+// supposed to be optimized out. The bug doesn't happen if local execution map optimization is turned off. In those
+// areas, spots aren't present: range analysis finds Spots2D always returns 0, which means Select ignores it and outputs
+// a constant. But instead, it appears as if it returned the last values obtained in an area where a spot was present.
+void test_voxel_graph_spots2d_optimized_execution_map() {
+	Ref<VoxelGeneratorGraph> generator;
+	generator.instantiate();
+
+	const float SPOT_RADIUS = 5.f;
+	const float CELL_SIZE = 64.f;
+	const float JITTER = 0.f; // All spots are centered in their cell
+	const unsigned int TEX_INDEX0 = 0;
+	const unsigned int TEX_INDEX1 = 1;
+
+	{
+		// generator = ResourceLoader::load("res://local_tests/smooth_materials/smooth_materials_generator_graph.tres");
+
+		Ref<VoxelGraphFunction> func = generator->get_main_function();
+		ZN_ASSERT(func.is_valid());
+
+		const uint32_t n4_out_sdf = func->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF, Vector2(), 4);
+
+		const uint32_t n5_plane = func->create_node(VoxelGraphFunction::NODE_SDF_PLANE, Vector2(), 5);
+		uint32_t height_input_index;
+		ZN_ASSERT(pg::NodeTypeDB::get_singleton().try_get_input_index_from_name(
+				VoxelGraphFunction::NODE_SDF_PLANE, "height", height_input_index));
+		func->set_node_default_input(n5_plane, height_input_index, 2.f);
+
+		const uint32_t n6_fnl1 = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2(), 6);
+
+		const uint32_t n7_mul = func->create_node(VoxelGraphFunction::NODE_MULTIPLY, Vector2(), 7);
+		func->set_node_default_input(n7_mul, 1, 1.f); // b
+
+		const uint32_t n9_sub = func->create_node(VoxelGraphFunction::NODE_SUBTRACT, Vector2(), 9);
+		const uint32_t n11_fnl2 = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2(), 11);
+		const uint32_t n12_out_tex = func->create_node(VoxelGraphFunction::NODE_OUTPUT_SINGLE_TEXTURE, Vector2(), 12);
+
+		const uint32_t n13_select1 = func->create_node(VoxelGraphFunction::NODE_SELECT, Vector2(), 13);
+		func->set_node_default_input(n13_select1, 0, 0.f); // a
+		func->set_node_default_input(n13_select1, 1, 1.f); // b
+		func->set_node_param(n13_select1, 0, 0.5f); // threshold
+
+		const uint32_t n14_fnl3 = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2(), 14);
+
+		const uint32_t n15_select2 = func->create_node(VoxelGraphFunction::NODE_SELECT, Vector2(), 15);
+		func->set_node_default_input(n15_select2, 0, 0.f); // a
+		func->set_node_default_input(n15_select2, 1, 2.f); // b
+		func->set_node_param(n15_select2, 0, 0.5f); // threshold
+
+		const uint32_t n16_fnl4 = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2(), 16);
+
+		const uint32_t n18_select3 = func->create_node(VoxelGraphFunction::NODE_SELECT, Vector2(), 18);
+		func->set_node_default_input(n18_select3, 0, 0.f); // a
+		func->set_node_default_input(n18_select3, 1, 3.f); // b
+		func->set_node_param(n18_select3, 0, 0.5f); // threshold
+
+		const uint32_t n19_select4 = func->create_node(VoxelGraphFunction::NODE_SELECT, Vector2(), 19);
+		func->set_node_default_input(n19_select4, 0, 0.f); // a
+		func->set_node_default_input(n19_select4, 1, 4.f); // b
+		func->set_node_param(n19_select4, 0, 0.5f); // threshold
+
+		const uint32_t n20_fnl5 = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2(), 20);
+		const uint32_t n21_fnl6 = func->create_node(VoxelGraphFunction::NODE_FAST_NOISE_2D, Vector2(), 21);
+
+		const uint32_t n22_select5 = func->create_node(VoxelGraphFunction::NODE_SELECT, Vector2(), 22);
+		func->set_node_default_input(n22_select5, 0, 0.f); // a
+		func->set_node_default_input(n22_select5, 1, 5.f); // b
+		func->set_node_param(n22_select5, 0, 0.5f); // threshold
+
+		const uint32_t n23_spots2d = func->create_node(VoxelGraphFunction::NODE_SPOTS_2D, Vector2(), 23);
+		uint32_t cell_size_param_index;
+		uint32_t jitter_param_index;
+		ZN_ASSERT(pg::NodeTypeDB::get_singleton().try_get_param_index_from_name(
+				VoxelGraphFunction::NODE_SPOTS_2D, "cell_size", cell_size_param_index));
+		ZN_ASSERT(pg::NodeTypeDB::get_singleton().try_get_param_index_from_name(
+				VoxelGraphFunction::NODE_SPOTS_2D, "jitter", jitter_param_index));
+		func->set_node_param(n23_spots2d, cell_size_param_index, CELL_SIZE);
+		func->set_node_param(n23_spots2d, jitter_param_index, JITTER);
+		func->set_node_default_input(n23_spots2d, 2, SPOT_RADIUS);
+
+		func->add_connection(n19_select4, 0, n22_select5, 0);
+		func->add_connection(n13_select1, 0, n12_out_tex, 0);
+		func->add_connection(n14_fnl3, 0, n15_select2, 2);
+		func->add_connection(n15_select2, 0, n18_select3, 0);
+		func->add_connection(n16_fnl4, 0, n18_select3, 2);
+		func->add_connection(n18_select3, 0, n19_select4, 0);
+		func->add_connection(n20_fnl5, 0, n19_select4, 2);
+		func->add_connection(n21_fnl6, 0, n22_select5, 2);
+		func->add_connection(n23_spots2d, 0, n13_select1, 2);
+		func->add_connection(n5_plane, 0, n9_sub, 0);
+		func->add_connection(n6_fnl1, 0, n7_mul, 0);
+		func->add_connection(n7_mul, 0, n9_sub, 1);
+		func->add_connection(n9_sub, 0, n4_out_sdf, 0);
+
+		/*
+		// Plane --- OutSDF
+		//
+		//           0
+		//            \
+		//       1 --- Select --- OutSingleTexture
+		//            /
+		//     Spots2D
+		//
+		// Flat terrain with spots
+
+		Ref<VoxelGraphFunction> func = generator->get_main_function();
+		ZN_ASSERT(func.is_valid());
+
+		const uint32_t n_out_sdf = func->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF, Vector2());
+		const uint32_t n_plane = func->create_node(VoxelGraphFunction::NODE_SDF_PLANE, Vector2());
+		const uint32_t n_select = func->create_node(VoxelGraphFunction::NODE_SELECT, Vector2());
+		const uint32_t n_spots2d = func->create_node(VoxelGraphFunction::NODE_SPOTS_2D, Vector2());
+		const uint32_t n_out_single_texture =
+				func->create_node(VoxelGraphFunction::NODE_OUTPUT_SINGLE_TEXTURE, Vector2());
+
+		uint32_t height_input_index;
+		ZN_ASSERT(pg::NodeTypeDB::get_singleton().try_get_input_index_from_name(
+				VoxelGraphFunction::NODE_SDF_PLANE, "height", height_input_index));
+		func->set_node_default_input(n_plane, height_input_index, 1.f);
+
+		uint32_t cell_size_param_index;
+		uint32_t jitter_param_index;
+		ZN_ASSERT(pg::NodeTypeDB::get_singleton().try_get_param_index_from_name(
+				VoxelGraphFunction::NODE_SPOTS_2D, "cell_size", cell_size_param_index));
+		ZN_ASSERT(pg::NodeTypeDB::get_singleton().try_get_param_index_from_name(
+				VoxelGraphFunction::NODE_SPOTS_2D, "jitter", jitter_param_index));
+		func->set_node_param(n_spots2d, cell_size_param_index, CELL_SIZE);
+		func->set_node_param(n_spots2d, jitter_param_index, JITTER);
+		func->set_node_default_input(n_spots2d, 2, SPOT_RADIUS);
+
+		func->set_node_default_input(n_select, 0, TEX_INDEX0);
+		func->set_node_default_input(n_select, 1, TEX_INDEX1);
+		func->set_node_param(n_select, 0, 0.5f); // Threshold
+
+		func->add_connection(n_plane, 0, n_out_sdf, 0);
+		func->add_connection(n_spots2d, 0, n_select, 2);
+		func->add_connection(n_select, 0, n_out_single_texture, 0);
+		//*/
+	}
+
+	CompilationResult result = generator->compile(false);
+	ZN_TEST_ASSERT(result.success);
+
+	struct L {
+		static bool has_spot(const VoxelBufferInternal &vb) {
+			Vector3i pos;
+			for (pos.z = 0; pos.z < vb.get_size().z; ++pos.z) {
+				for (pos.x = 0; pos.x < vb.get_size().x; ++pos.x) {
+					for (pos.y = 0; pos.y < vb.get_size().y; ++pos.y) {
+						const uint32_t encoded_indices = vb.get_voxel(pos, VoxelBufferInternal::CHANNEL_INDICES);
+						const uint32_t encoded_weights = vb.get_voxel(pos, VoxelBufferInternal::CHANNEL_WEIGHTS);
+						const FixedArray<uint8_t, 4> indices = decode_indices_from_packed_u16(encoded_indices);
+						const FixedArray<uint8_t, 4> weights = decode_weights_from_packed_u16(encoded_weights);
+						int indices_with_high_weight = 0;
+						bool has_tex1 = false;
+						for (unsigned int i = 0; i < 4; ++i) {
+							if (weights[i] > 200) {
+								const uint8_t ii = indices[i];
+								ZN_TEST_ASSERT_MSG(ii == TEX_INDEX0 || ii == TEX_INDEX1,
+										"Expected only one of our two indices with high weight");
+								++indices_with_high_weight;
+								if (ii == TEX_INDEX1) {
+									has_tex1 = true;
+								}
+							}
+						}
+						ZN_TEST_ASSERT(indices_with_high_weight == 1);
+						if (has_tex1) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		}
+
+		static std::string print_u16_hex(uint16_t x) {
+			const char *s_chars = "0123456789abcdef";
+			std::string s;
+			for (int i = 3; i >= 0; --i) {
+				const unsigned int nibble = (x >> (i * 4)) & 0xf;
+				s += s_chars[nibble];
+			}
+			return s;
+		}
+
+		static void print_indices_and_weights(const VoxelBufferInternal &vb, int y) {
+			Vector3i pos(0, y, 0);
+			std::string s;
+			for (pos.z = 0; pos.z < vb.get_size().z; ++pos.z) {
+				for (pos.x = 0; pos.x < vb.get_size().x; ++pos.x) {
+					const uint16_t encoded_indices = vb.get_voxel(pos, VoxelBufferInternal::CHANNEL_INDICES);
+					s += print_u16_hex(encoded_indices);
+					s += " ";
+				}
+				s += " | ";
+				for (pos.x = 0; pos.x < vb.get_size().x; ++pos.x) {
+					const uint16_t encoded_weights = vb.get_voxel(pos, VoxelBufferInternal::CHANNEL_WEIGHTS);
+					s += print_u16_hex(encoded_weights);
+					s += " ";
+				}
+				s += "\n";
+			}
+			println(format("Indices and weights at Y={}:", y));
+			println(s);
+		}
+	};
+
+	const int BLOCK_SIZE = 16;
+
+	VoxelBufferInternal voxels1;
+	voxels1.create(Vector3iUtil::create(BLOCK_SIZE));
+	VoxelBufferInternal voxels2;
+	voxels2.create(Vector3iUtil::create(BLOCK_SIZE));
+
+	// First do a run without the optimization
+	generator->set_use_optimized_execution_map(false);
+	{
+		// There is a spot in the top-right corner of this area
+		generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels1, Vector3i(16, 0, 16), 0 });
+		// L::print_indices_and_weights(voxels1, 8);
+		ZN_TEST_ASSERT(L::has_spot(voxels1));
+
+		// There is no spot here
+		generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels2, Vector3i(0, 0, 0), 0 });
+		// L::print_indices_and_weights(voxels2, 8);
+		ZN_TEST_ASSERT(L::has_spot(voxels2) == false);
+	}
+
+	VoxelBufferInternal voxels3;
+	voxels3.create(Vector3iUtil::create(BLOCK_SIZE));
+	VoxelBufferInternal voxels4;
+	voxels4.create(Vector3iUtil::create(BLOCK_SIZE));
+
+	// Now do a run with the optimization, results must be the same
+	generator->set_use_optimized_execution_map(true);
+	{
+		generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels3, Vector3i(16, 0, 16), 0 });
+		// L::print_indices_and_weights(voxels3, 8);
+		ZN_TEST_ASSERT(L::has_spot(voxels3));
+		ZN_TEST_ASSERT(voxels3.equals(voxels1));
+
+		generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels4, Vector3i(0, 0, 0), 0 });
+		// L::print_indices_and_weights(voxels4, 8);
+		ZN_TEST_ASSERT(L::has_spot(voxels4) == false);
+		ZN_TEST_ASSERT(voxels4.equals(voxels2));
+	}
+
+	// Broader test
+	/*{
+		struct BlockTest {
+			Vector3i origin;
+			bool expect_spot;
+		};
+
+		std::vector<BlockTest> block_tests;
+
+		generator->set_use_optimized_execution_map(false);
+
+		Vector3i bpos;
+		for (bpos.z = -4; bpos.z < 4; ++bpos.z) {
+			for (bpos.x = -4; bpos.x < 4; ++bpos.x) {
+				const Vector3i origin = bpos * BLOCK_SIZE;
+				generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels, origin, 0 });
+				block_tests.push_back(BlockTest{ origin, L::has_spot(voxels) });
+			}
+		}
+
+		generator->set_use_optimized_execution_map(true);
+
+		for (unsigned int bti = 0; bti < block_tests.size(); ++bti) {
+			const BlockTest bt = block_tests[bti];
+			generator->generate_block(VoxelGenerator::VoxelQueryData{ voxels, bt.origin, 0 });
+			const bool spot_found = L::has_spot(voxels);
+			ZN_TEST_ASSERT(bt.expect_spot == spot_found);
+		}
+	}*/
+}
+
+void test_voxel_graph_unused_inner_output() {
+	// When compiling a graph with an unused output in one if its inner nodes (not an Output* node), compiling in debug
+	// would crash because it tries to allocate an output buffer with 0 users, which should be allowed specifically in
+	// debug. To reproduce this, we need to have a node with more than one output, and one output being being used for a
+	// graph output. So the node will get compiled as part of the program, but will have an unused output. In non-debug
+	// this output will be allocated as a temporary throwaway buffer, but in debug all outputs are allocated regardless
+	// since buffer allocations are not optimized.
+
+	Ref<VoxelGeneratorGraph> generator;
+	generator.instantiate();
+	{
+		Ref<VoxelGraphFunction> g = generator->get_main_function();
+		ZN_ASSERT(g.is_valid());
+
+		//    X             OutSDF
+		//     \           /
+		// Y -- Normalize3D -- (unused `ny`)
+		//     /         \ \
+		//    Z           \ (unused `nz`)
+		//                 \
+		//                  (unused `len`)
+
+		const uint32_t n_x = g->create_node(VoxelGraphFunction::NODE_INPUT_X, Vector2());
+		const uint32_t n_y = g->create_node(VoxelGraphFunction::NODE_INPUT_Y, Vector2());
+		const uint32_t n_z = g->create_node(VoxelGraphFunction::NODE_INPUT_Z, Vector2());
+		const uint32_t n_normalize = g->create_node(VoxelGraphFunction::NODE_NORMALIZE_3D, Vector2());
+		const uint32_t n_out = g->create_node(VoxelGraphFunction::NODE_OUTPUT_SDF, Vector2());
+
+		g->add_connection(n_x, 0, n_normalize, 0);
+		g->add_connection(n_y, 0, n_normalize, 1);
+		g->add_connection(n_z, 0, n_normalize, 2);
+		g->add_connection(n_normalize, 0, n_out, 0);
+		// Leave outputs `ny`, `nz` and `len` unused
+	}
+
+	const CompilationResult result_debug = generator->compile(true);
+	ZN_TEST_ASSERT(result_debug.success);
+
+	const CompilationResult result_ndebug = generator->compile(true);
+	ZN_TEST_ASSERT(result_ndebug.success);
 }
 
 } // namespace zylann::voxel::tests

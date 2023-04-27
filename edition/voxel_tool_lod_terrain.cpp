@@ -288,6 +288,26 @@ void VoxelToolLodTerrain::copy(Vector3i pos, Ref<gd::VoxelBuffer> dst, uint8_t c
 	_terrain->get_storage().copy(pos, dst->get_buffer(), channels_mask);
 }
 
+void VoxelToolLodTerrain::paste(Vector3i pos, Ref<gd::VoxelBuffer> dst, uint8_t channels_mask) {
+	ERR_FAIL_COND(_terrain == nullptr);
+	ERR_FAIL_COND(dst.is_null());
+	if (channels_mask == 0) {
+		channels_mask = (1 << _channel);
+	}
+	const Box3i box(pos, dst->get_size());
+	if (!is_area_editable(box)) {
+		ZN_PRINT_VERBOSE("Area not editable");
+		return;
+	}
+
+	VoxelData &data = _terrain->get_storage();
+
+	data.pre_generate_box(box);
+	data.paste(pos, dst->get_buffer(), channels_mask, false);
+
+	_post_edit(box);
+}
+
 float VoxelToolLodTerrain::get_voxel_f_interpolated(Vector3 position) const {
 	ZN_PROFILE_SCOPE();
 	ERR_FAIL_COND_V(_terrain == nullptr, 0);
@@ -918,7 +938,7 @@ void VoxelToolLodTerrain::do_graph(Ref<VoxelGeneratorGraph> graph, Transform3D t
 
 	scale_and_store_sdf(buffer, in_sdf_full);
 
-	data.paste(box.pos, buffer, 1 << channel_index, false, 0, false);
+	data.paste(box.pos, buffer, 1 << channel_index, false);
 
 	_post_edit(box);
 }

@@ -8,7 +8,30 @@ At the moment, this module doesn't have a distinct release schedule, so this cha
 Semver is not yet in place, so each version can have breaking changes, although it shouldn't happen often across minor versions.
 
 
-1.x - Ongoing development - `master`
+1.x - ongoing development - `master`
+--------------------------------------
+
+- General
+    - Added shadow casting setting to both terrain types
+    - `VoxelGeneratorGraph`:
+        - Added `Spots2D` and `Spots3D` nodes, optimized for generating "ore patches"
+    - `VoxelTerrain`:
+        - Added `VoxelTerrainMultiplayerSynchronizer`, which simplifies replication using Godot's high-level multiplayer API
+    - `VoxelTool`:
+        - Added `smooth_sphere`, which smoothens terrain in a spherical area using box blur. Smooth/SDF terrain only. (Thanks to Piratux for the idea and initial implementation)
+        - Separated `paste` into `paste` and `paste_masked` functions. The latter performs masking using a specific channel and value.
+    - `VoxelToolLodTerrain`:
+        - Added support for `paste`
+    - `VoxelMesherCubes`:
+        - Added helper function to convert an image into a 1-voxel thick "sprite mesh"
+
+- Fixes
+    - Fixed editor not shrinking properly on narrow screens with a terrain selected. Stats appearing in bottom panel will use a scrollbar if the area is too small.
+    - `VoxelLodTerrain`: fixed error spam when re-generating or destroying the terrain
+    - `VoxelGeneratorGraph`: fixed crash if a graph contains a node with both used and unused outputs, and gets compiled with `debug=false`
+
+
+1.0 - 12/03/2023 - `godot4.0`
 ------------------------------
 
 Godot 4 is required from this version.

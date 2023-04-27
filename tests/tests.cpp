@@ -1,4 +1,5 @@
 #include "tests.h"
+#include "../edition/funcs.h"
 #include "../edition/voxel_mesh_sdf_gd.h"
 #include "../edition/voxel_tool_terrain.h"
 #include "../generators/graph/range_utility.h"
@@ -26,6 +27,7 @@
 #include "test_detail_rendering_gpu.h"
 #include "test_expression_parser.h"
 #include "test_octree.h"
+#include "test_util.h"
 #include "test_voxel_graph.h"
 #include "testing.h"
 
@@ -106,7 +108,7 @@ void test_voxel_data_map_paste_fill() {
 
 	const Box3i box(Vector3i(10, 10, 10), buffer.get_size());
 
-	map.paste(box.pos, buffer, (1 << channel), false, 0, true);
+	map.paste(box.pos, buffer, (1 << channel), false, 0, 0, true);
 
 	// All voxels in the area must be as pasted
 	const bool is_match =
@@ -149,7 +151,7 @@ void test_voxel_data_map_paste_mask() {
 
 	const Box3i box(Vector3i(10, 10, 10), buffer.get_size());
 
-	map.paste(box.pos, buffer, (1 << channel), true, masked_value, true);
+	map.paste(box.pos, buffer, (1 << channel), true, channel, masked_value, true);
 
 	// All voxels in the area must be as pasted. Ignoring the outline.
 	const bool is_match = box.padded(-1).all_cells_match(
@@ -220,7 +222,7 @@ void test_voxel_data_map_copy() {
 		}
 	}
 
-	map.paste(box.pos, buffer, (1 << channel), true, default_value, true);
+	map.paste(box.pos, buffer, (1 << channel), true, channel, default_value, true);
 
 	VoxelBufferInternal buffer2;
 	buffer2.create(box.size);
@@ -254,7 +256,7 @@ void test_encode_weights_packed_u16() {
 	weights[1] = 5 << 4;
 	weights[2] = 10 << 4;
 	weights[3] = 15 << 4;
-	const uint16_t encoded_weights = encode_weights_to_packed_u16(weights[0], weights[1], weights[2], weights[3]);
+	const uint16_t encoded_weights = encode_weights_to_packed_u16_lossy(weights[0], weights[1], weights[2], weights[3]);
 	FixedArray<uint8_t, 4> decoded_weights = decode_weights_from_packed_u16(encoded_weights);
 	ZN_TEST_ASSERT(weights == decoded_weights);
 }
@@ -906,9 +908,7 @@ void test_block_serializer_stream_peer() {
 	peer.instantiate();
 	// peer->clear();
 
-	Ref<gd::VoxelBlockSerializer> serializer;
-	serializer.instantiate();
-	const int size = serializer->serialize(peer, voxel_buffer, true);
+	const int size = gd::VoxelBlockSerializer::serialize_to_stream_peer(peer, voxel_buffer, true);
 
 	PackedByteArray data_array = peer->get_data_array();
 
@@ -921,10 +921,7 @@ void test_block_serializer_stream_peer() {
 	peer2.instantiate();
 	peer2->set_data_array(data_array);
 
-	Ref<gd::VoxelBlockSerializer> serializer2;
-	serializer2.instantiate();
-
-	serializer2->deserialize(peer2, voxel_buffer2, size, true);
+	gd::VoxelBlockSerializer::deserialize_from_stream_peer(peer2, voxel_buffer2, size, true);
 
 	ZN_TEST_ASSERT(voxel_buffer2->get_buffer().equals(voxel_buffer->get_buffer()));
 }
@@ -1874,6 +1871,46 @@ void test_slot_map() {
 	ZN_TEST_ASSERT(map.count() == 0);
 }
 
+void test_box_blur() {
+	VoxelBufferInternal voxels;
+	voxels.create(64, 64, 64);
+
+	Vector3i pos;
+	for (pos.z = 0; pos.z < voxels.get_size().z; ++pos.z) {
+		for (pos.x = 0; pos.x < voxels.get_size().x; ++pos.x) {
+			for (pos.y = 0; pos.y < voxels.get_size().y; ++pos.y) {
+				const float sd = Math::cos(0.53f * pos.x) + Math::sin(0.37f * pos.y) + Math::sin(0.71f * pos.z);
+				voxels.set_voxel_f(sd, pos, VoxelBufferInternal::CHANNEL_SDF);
+			}
+		}
+	}
+
+	const int blur_radius = 3;
+	const Vector3f sphere_pos = to_vec3f(voxels.get_size()) / 2.f;
+	const float sphere_radius = 64 - blur_radius;
+
+	struct L {
+		static void save_image(const VoxelBufferInternal &vb, int y, const char *name) {
+			Ref<Image> im = gd::VoxelBuffer::debug_print_sdf_z_slice(vb, 1.f, y);
+			ZN_ASSERT(im.is_valid());
+			im->resize(im->get_width() * 4, im->get_height() * 4, Image::INTERPOLATE_NEAREST);
+			im->save_png(name);
+		}
+	};
+
+	// L::save_image(voxels, 32, "test_box_blur_src.png");
+
+	VoxelBufferInternal voxels_blurred_1;
+	ops::box_blur_slow_ref(voxels, voxels_blurred_1, blur_radius, sphere_pos, sphere_radius);
+	// L::save_image(voxels_blurred_1, 32 - blur_radius, "test_box_blur_blurred_1.png");
+
+	VoxelBufferInternal voxels_blurred_2;
+	ops::box_blur(voxels, voxels_blurred_2, blur_radius, sphere_pos, sphere_radius);
+	// L::save_image(voxels_blurred_2, 32 - blur_radius, "test_box_blur_blurred_2.png");
+
+	ZN_TEST_ASSERT(sd_equals_approx(voxels_blurred_1, voxels_blurred_2));
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define VOXEL_TEST(fname)                                                                                              \
@@ -1915,6 +1952,9 @@ void run_voxel_tests() {
 #endif
 #endif
 	VOXEL_TEST(test_voxel_graph_issue471);
+	VOXEL_TEST(test_voxel_graph_unused_single_texture_output);
+	VOXEL_TEST(test_voxel_graph_spots2d_optimized_execution_map);
+	VOXEL_TEST(test_voxel_graph_unused_inner_output);
 	VOXEL_TEST(test_island_finder);
 	VOXEL_TEST(test_unordered_remove_if);
 	VOXEL_TEST(test_instance_data_serialization);
@@ -1943,6 +1983,7 @@ void run_voxel_tests() {
 	VOXEL_TEST(test_issue463);
 	VOXEL_TEST(test_normalmap_render_gpu);
 	VOXEL_TEST(test_slot_map);
+	VOXEL_TEST(test_box_blur);
 
 	print_line("------------ Voxel tests end -------------");
 }

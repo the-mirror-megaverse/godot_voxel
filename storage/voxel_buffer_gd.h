@@ -2,7 +2,6 @@
 #define VOXEL_BUFFER_GD_H
 
 #include "../util/godot/classes/ref_counted.h"
-#include "../util/godot/core/binder.h"
 #include "../util/macros.h"
 #include "voxel_buffer_internal.h"
 #include <memory>
@@ -161,6 +160,8 @@ public:
 	static Ref<Image> debug_print_sdf_to_image_top_down(const VoxelBufferInternal &vb);
 	Array debug_print_sdf_y_slices(float scale) const;
 	Ref<Image> debug_print_sdf_y_slice(float scale, int y) const;
+	static Ref<Image> debug_print_sdf_y_slice(const VoxelBufferInternal &buffer, float scale, int y);
+	static Ref<Image> debug_print_sdf_z_slice(const VoxelBufferInternal &buffer, float scale, int z);
 
 private:
 	void _b_deprecated_optimize();
@@ -178,8 +179,8 @@ private:
 } // namespace gd
 } // namespace zylann::voxel
 
-ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::gd::VoxelBuffer, ChannelId)
-ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::gd::VoxelBuffer, Depth)
-ZN_GODOT_VARIANT_ENUM_CAST(zylann::voxel::gd::VoxelBuffer, Compression)
+VARIANT_ENUM_CAST(zylann::voxel::gd::VoxelBuffer::ChannelId)
+VARIANT_ENUM_CAST(zylann::voxel::gd::VoxelBuffer::Depth)
+VARIANT_ENUM_CAST(zylann::voxel::gd::VoxelBuffer::Compression)
 
 #endif // VOXEL_BUFFER_GD_H

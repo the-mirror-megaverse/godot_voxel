@@ -37,6 +37,7 @@
 #include "streams/voxel_stream_script.h"
 #include "terrain/fixed_lod/voxel_box_mover.h"
 #include "terrain/fixed_lod/voxel_terrain.h"
+#include "terrain/fixed_lod/voxel_terrain_multiplayer_synchronizer.h"
 #include "terrain/instancing/voxel_instance_component.h"
 #include "terrain/instancing/voxel_instance_library_scene_item.h"
 #include "terrain/instancing/voxel_instancer.h"
@@ -62,6 +63,10 @@
 #include "util/godot/classes/engine.h"
 #include "util/godot/classes/project_settings.h"
 #include "util/godot/core/class_db.h"
+// Just for size reminders
+#include "util/godot/classes/control.h"
+#include "util/godot/classes/mesh_instance_3d.h"
+#include "util/godot/classes/sprite_2d.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef TOOLS_ENABLED
@@ -114,19 +119,35 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// This is used to have an idea of the memory footprint of various objects as Godot and Voxel development progresses.
 void print_size_reminders() {
 	using namespace zylann;
 	using namespace voxel;
+
+	// Note, this only logs the base size each of these classes. They can often have a bigger memory
+	// footprint due to dynamically-allocated members (arrays, dictionaries, RIDs referring to even more data in
+	// RenderingServer...)
 
 	ZN_PRINT_VERBOSE(format("Size of Variant: {}", sizeof(Variant)));
 	ZN_PRINT_VERBOSE(format("Size of Object: {}", sizeof(Object)));
 	ZN_PRINT_VERBOSE(format("Size of RefCounted: {}", sizeof(RefCounted)));
 	ZN_PRINT_VERBOSE(format("Size of Node: {}", sizeof(Node)));
 	ZN_PRINT_VERBOSE(format("Size of Node3D: {}", sizeof(Node3D)));
+	ZN_PRINT_VERBOSE(format("Size of MeshInstance3D: {}", sizeof(MeshInstance3D)));
+	ZN_PRINT_VERBOSE(format("Size of GeometryInstance3D: {}", sizeof(MeshInstance3D)));
+	ZN_PRINT_VERBOSE(format("Size of Resource: {}", sizeof(Resource)));
+	ZN_PRINT_VERBOSE(format("Size of Mesh: {}", sizeof(Mesh)));
+	ZN_PRINT_VERBOSE(format("Size of ArrayMesh: {}", sizeof(ArrayMesh)));
+
+	ZN_PRINT_VERBOSE(format("Size of CanvasItem: {}", sizeof(CanvasItem)));
+	ZN_PRINT_VERBOSE(format("Size of Node2D: {}", sizeof(Node2D)));
+	ZN_PRINT_VERBOSE(format("Size of Sprite2D: {}", sizeof(Sprite2D)));
+	ZN_PRINT_VERBOSE(format("Size of Control: {}", sizeof(Control)));
 
 	ZN_PRINT_VERBOSE(format("Size of RWLock: {}", sizeof(zylann::RWLock)));
 	ZN_PRINT_VERBOSE(format("Size of Mutex: {}", sizeof(zylann::Mutex)));
 	ZN_PRINT_VERBOSE(format("Size of BinaryMutex: {}", sizeof(zylann::BinaryMutex)));
+
 	ZN_PRINT_VERBOSE(format("Size of gd::VoxelBuffer: {}", sizeof(gd::VoxelBuffer)));
 	ZN_PRINT_VERBOSE(format("Size of VoxelBufferInternal: {}", sizeof(VoxelBufferInternal)));
 	ZN_PRINT_VERBOSE(format("Size of VoxelMeshBlock: {}", sizeof(VoxelMeshBlock)));
@@ -244,6 +265,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<FastNoise2>();
 #endif
 		ClassDB::register_class<VoxelMeshSDF>();
+		ClassDB::register_class<VoxelTerrainMultiplayerSynchronizer>();
 
 		// Meshers
 		register_abstract_class<VoxelMesher>();
@@ -317,8 +339,10 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<ZN_FastNoiseLiteEditorInspectorPlugin>();
 		ClassDB::register_class<ZN_FastNoiseLiteViewer>();
 
+		ClassDB::register_class<ZN_EditorPlugin>();
 		ClassDB::register_class<ZN_EditorImportPlugin>();
 		ClassDB::register_class<ZN_EditorInspectorPlugin>();
+		ClassDB::register_class<ZN_EditorProperty>();
 
 		ClassDB::register_class<magica::VoxelVoxEditorPlugin>();
 		ClassDB::register_class<magica::VoxelVoxMeshImporter>();

@@ -109,7 +109,7 @@ inline void blend_texture_packed_u16(
 		}
 
 		encoded_indices = encode_indices_to_packed_u16(indices[0], indices[1], indices[2], indices[3]);
-		encoded_weights = encode_weights_to_packed_u16(weights[0], weights[1], weights[2], weights[3]);
+		encoded_weights = encode_weights_to_packed_u16_lossy(weights[0], weights[1], weights[2], weights[3]);
 	}
 }
 
@@ -454,6 +454,12 @@ struct DoShape {
 };
 
 typedef DoShape<SdfHemisphere> DoHemisphere;
+
+void box_blur_slow_ref(
+		const VoxelBufferInternal &src, VoxelBufferInternal &dst, int radius, Vector3f sphere_pos, float sphere_radius);
+
+void box_blur(
+		const VoxelBufferInternal &src, VoxelBufferInternal &dst, int radius, Vector3f sphere_pos, float sphere_radius);
 
 template <typename Shape_A, typename Shape_B>
 struct SdfFlattenOperation {

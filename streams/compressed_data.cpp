@@ -9,12 +9,14 @@
 namespace zylann::voxel::CompressedData {
 
 bool decompress_lz4(MemoryReader &f, Span<const uint8_t> src, std::vector<uint8_t> &dst) {
-	const uint32_t decompressed_size = f.get_32();
-	const uint32_t header_size = sizeof(uint8_t) + sizeof(uint32_t);
+	const int decompressed_size = f.get_32();
+	ZN_ASSERT_RETURN_V(decompressed_size >= 0, false);
+
+	const int header_size = sizeof(uint8_t) + sizeof(uint32_t);
 
 	dst.resize(decompressed_size);
 
-	const uint32_t actually_decompressed_size = LZ4_decompress_safe(
+	const int actually_decompressed_size = LZ4_decompress_safe(
 			(const char *)src.data() + header_size, (char *)dst.data(), src.size() - header_size, dst.size());
 
 	ZN_ASSERT_RETURN_V_MSG(

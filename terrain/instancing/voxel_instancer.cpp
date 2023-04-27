@@ -261,7 +261,7 @@ void VoxelInstancer::process_generator_results() {
 		}
 
 		update_block_from_transforms(block_it->second, to_span_const(output.transforms), output.render_block_position,
-				layer, *item, output.layer_id, world, block_global_transform);
+				layer, *item, output.layer_id, world, block_global_transform, block_local_transform.origin);
 	}
 
 	results.clear();
@@ -648,7 +648,7 @@ void VoxelInstancer::regenerate_layer(uint16_t layer_id, bool regenerate_blocks)
 		const Transform3D block_transform = parent_transform * block_local_transform;
 
 		update_block_from_transforms(block_index, to_span_const(transform_cache), block.grid_position, layer, **item,
-				layer_id, world, block_transform);
+				layer_id, world, block_transform, block_local_transform.origin);
 	}
 }
 
@@ -866,6 +866,8 @@ void VoxelInstancer::on_mesh_block_exit(Vector3i render_grid_position, unsigned 
 
 	BufferedTaskScheduler &tasks = BufferedTaskScheduler::get_for_current_thread();
 
+	const bool can_save = _parent == nullptr || _parent->get_stream().is_valid();
+
 	// Remove data blocks
 	const int render_to_data_factor = 1 << (_parent_mesh_block_size_po2 - _parent_data_block_size_po2);
 	ERR_FAIL_COND(render_to_data_factor <= 0 || render_to_data_factor > 2);
@@ -881,11 +883,13 @@ void VoxelInstancer::on_mesh_block_exit(Vector3i render_grid_position, unsigned 
 
 				auto modified_block_it = lod.modified_blocks.find(data_grid_pos);
 				if (modified_block_it != lod.modified_blocks.end()) {
-					SaveBlockDataTask *task = save_block(data_grid_pos, lod_index, nullptr);
-					lod.modified_blocks.erase(modified_block_it);
-					if (task != nullptr) {
-						tasks.push_io_task(task);
+					if (can_save) {
+						SaveBlockDataTask *task = save_block(data_grid_pos, lod_index, nullptr);
+						if (task != nullptr) {
+							tasks.push_io_task(task);
+						}
 					}
+					lod.modified_blocks.erase(modified_block_it);
 				}
 			}
 		}
@@ -909,6 +913,13 @@ void VoxelInstancer::on_mesh_block_exit(Vector3i render_grid_position, unsigned 
 void VoxelInstancer::save_all_modified_blocks(
 		BufferedTaskScheduler &tasks, std::shared_ptr<AsyncDependencyTracker> tracker) {
 	ZN_DSTACK();
+
+	ZN_ASSERT_RETURN(_parent != nullptr);
+	const bool can_save = _parent->get_stream().is_valid();
+	ZN_ASSERT_RETURN_MSG(can_save,
+			format("Cannot save instances, the parent {} has no {} assigned.", _parent->get_class(),
+					String(VoxelStream::get_class_static())));
+
 	for (unsigned int lod_index = 0; lod_index < _lods.size(); ++lod_index) {
 		Lod &lod = _lods[lod_index];
 		for (auto it = lod.modified_blocks.begin(); it != lod.modified_blocks.end(); ++it) {
@@ -973,7 +984,7 @@ unsigned int VoxelInstancer::create_block(
 
 void VoxelInstancer::update_block_from_transforms(int block_index, Span<const Transform3f> transforms,
 		Vector3i grid_position, Layer &layer, const VoxelInstanceLibraryItem &item_base, uint16_t layer_id,
-		World3D &world, const Transform3D &block_transform) {
+		World3D &world, const Transform3D &block_global_transform, Vector3 block_local_position) {
 	ZN_PROFILE_SCOPE();
 
 	// Get or create block
@@ -1028,7 +1039,7 @@ void VoxelInstancer::update_block_from_transforms(int block_index, Span<const Tr
 			}
 			block.multimesh_instance.set_multimesh(multimesh);
 			block.multimesh_instance.set_world(&world);
-			block.multimesh_instance.set_transform(block_transform);
+			block.multimesh_instance.set_transform(block_global_transform);
 			block.multimesh_instance.set_material_override(settings.material_override);
 			block.multimesh_instance.set_cast_shadows_setting(settings.shadow_casting_setting);
 		}
@@ -1044,7 +1055,8 @@ void VoxelInstancer::update_block_from_transforms(int block_index, Span<const Tr
 			// Add new bodies
 			for (unsigned int instance_index = 0; instance_index < transforms.size(); ++instance_index) {
 				const Transform3D local_transform = to_transform3(transforms[instance_index]);
-				const Transform3D body_transform = block_transform * local_transform;
+				// Bodies are child nodes of the instancer, so we use local block coordinates
+				const Transform3D body_transform(local_transform.basis, local_transform.origin + block_local_position);
 
 				VoxelInstancerRigidBody *body;
 
@@ -1105,7 +1117,7 @@ void VoxelInstancer::update_block_from_transforms(int block_index, Span<const Tr
 		// Add new instances
 		for (unsigned int instance_index = 0; instance_index < transforms.size(); ++instance_index) {
 			const Transform3D local_transform = to_transform3(transforms[instance_index]);
-			const Transform3D body_transform = block_transform * local_transform;
+			const Transform3D body_transform(local_transform.basis, local_transform.origin + block_local_position);
 
 			SceneInstance instance;
 
@@ -1165,7 +1177,7 @@ void VoxelInstancer::create_render_blocks(Vector3i render_grid_position, int lod
 	const int data_block_size = data_block_size_base << lod_index;
 
 	const Transform3D block_local_transform = Transform3D(Basis(), render_grid_position * mesh_block_size);
-	const Transform3D block_transform = parent_transform * block_local_transform;
+	const Transform3D block_global_transform = parent_transform * block_local_transform;
 
 	const int render_to_data_factor = mesh_block_size_base / data_block_size_base;
 	const Vector3i data_min_pos = render_grid_position * render_to_data_factor;
@@ -1267,7 +1279,7 @@ void VoxelInstancer::create_render_blocks(Vector3i render_grid_position, int lod
 		} else {
 			// Create and populate block immediately
 			update_block_from_transforms(-1, to_span_const(transform_cache), render_grid_position, layer, *item,
-					layer_id, world, block_transform);
+					layer_id, world, block_global_transform, block_local_transform.origin);
 		}
 	}
 

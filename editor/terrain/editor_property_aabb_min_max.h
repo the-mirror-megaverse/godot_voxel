@@ -9,20 +9,17 @@
 namespace zylann {
 
 // Alternative to the default AABB editor which presents it as a minimum and maximum point
-class EditorPropertyAABBMinMax : public EditorProperty {
-	GDCLASS(EditorPropertyAABBMinMax, EditorProperty);
+class EditorPropertyAABBMinMax : public ZN_EditorProperty {
+	GDCLASS(EditorPropertyAABBMinMax, ZN_EditorProperty);
 
 public:
 	EditorPropertyAABBMinMax();
 
 	void setup(double p_min, double p_max, double p_step, bool p_no_slider, const String &p_suffix = String());
 
-	virtual void ZN_GODOT_UNDERSCORE_PREFIX_IF_EXTENSION(update_property)() override;
-
-#ifdef ZN_GODOT
 protected:
-#endif
-	virtual void _set_read_only(bool p_read_only) override;
+	void _zn_set_read_only(bool p_read_only) override;
+	void _zn_update_property() override;
 
 private:
 	void _on_value_changed(double p_val);
