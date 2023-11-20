@@ -7,7 +7,7 @@ Spawns items on top of voxel surfaces.
 
 ## Description: 
 
-Add-on to voxel nodes, allowing to spawn elements on the surface. These elements are rendered with hardware instancing, can have collisions, and also be persistent. It must be child of a voxel node. At the moment it only supports `VoxelLodTerrain`.
+Add-on to voxel nodes, allowing to spawn elements on the surface. These elements are rendered with hardware instancing, can have collisions, and also be persistent. It must be child of a voxel node.
 
 ## Properties: 
 
@@ -81,4 +81,4 @@ enum **DebugDrawFlag**:
 - [void](#)<span id="i_debug_set_draw_flag"></span> **debug_set_draw_flag**( [int](https://docs.godotengine.org/en/stable/classes/class_int.html) flag, [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html) enabled ) 
 
 
-_Generated on Mar 26, 2023_
+_Generated on Jul 23, 2023_

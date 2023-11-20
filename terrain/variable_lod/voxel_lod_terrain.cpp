@@ -53,7 +53,7 @@ struct BeforeUnloadMeshAction {
 	}
 };
 
-static inline uint64_t get_ticks_msec() {
+inline uint64_t get_ticks_msec() {
 	return Time::get_singleton()->get_ticks_msec();
 }
 
@@ -63,20 +63,37 @@ void ShaderMaterialPoolVLT::recycle(Ref<ShaderMaterial> material) {
 	ZN_PROFILE_SCOPE();
 	ZN_ASSERT_RETURN(material.is_valid());
 
+	const VoxelStringNames &sn = VoxelStringNames::get_singleton();
+
 	// Reset textures to avoid hoarding them in the pool
-	material->set_shader_parameter(VoxelStringNames::get_singleton().u_voxel_normalmap_atlas, Ref<Texture2D>());
-	material->set_shader_parameter(VoxelStringNames::get_singleton().u_voxel_cell_lookup, Ref<Texture2D>());
-	material->set_shader_parameter(
-			VoxelStringNames::get_singleton().u_voxel_virtual_texture_offset_scale, Vector4(0, 0, 0, 1));
+	material->set_shader_parameter(sn.u_voxel_normalmap_atlas, Ref<Texture2D>());
+	material->set_shader_parameter(sn.u_voxel_cell_lookup, Ref<Texture2D>());
+	material->set_shader_parameter(sn.u_voxel_virtual_texture_offset_scale, Vector4(0, 0, 0, 1));
 	// TODO Would be nice if we repurposed `u_transition_mask` to store extra flags.
 	// Here we exploit cell_size==0 as "there is no virtual normalmaps on this block"
-	material->set_shader_parameter(VoxelStringNames::get_singleton().u_voxel_cell_size, 0.f);
-	material->set_shader_parameter(VoxelStringNames::get_singleton().u_voxel_virtual_texture_fade, 0.f);
+	material->set_shader_parameter(sn.u_voxel_cell_size, 0.f);
+	material->set_shader_parameter(sn.u_voxel_virtual_texture_fade, 0.f);
 
-	material->set_shader_parameter(VoxelStringNames::get_singleton().u_transition_mask, 0);
-	material->set_shader_parameter(VoxelStringNames::get_singleton().u_lod_fade, Vector2(0.0, 0.0));
+	material->set_shader_parameter(sn.u_transition_mask, 0);
+	material->set_shader_parameter(sn.u_lod_fade, Vector2(0.0, 0.0));
 
 	ShaderMaterialPool::recycle(material);
+}
+
+inline void copy_param(ShaderMaterial &src, ShaderMaterial &dst, const StringName &name) {
+	dst.set_shader_parameter(name, src.get_shader_parameter(name));
+}
+
+static void copy_vlt_block_params(ShaderMaterial &src, ShaderMaterial &dst) {
+	const VoxelStringNames &sn = VoxelStringNames::get_singleton();
+
+	copy_param(src, dst, sn.u_voxel_normalmap_atlas);
+	copy_param(src, dst, sn.u_voxel_cell_lookup);
+	copy_param(src, dst, sn.u_voxel_virtual_texture_offset_scale);
+	copy_param(src, dst, sn.u_voxel_cell_size);
+	copy_param(src, dst, sn.u_voxel_virtual_texture_fade);
+	copy_param(src, dst, sn.u_transition_mask);
+	copy_param(src, dst, sn.u_lod_fade);
 }
 
 void VoxelLodTerrain::ApplyMeshUpdateTask::run(TimeSpreadTaskContext &ctx) {
@@ -150,7 +167,7 @@ VoxelLodTerrain::VoxelLodTerrain() {
 		VoxelLodTerrain *self = reinterpret_cast<VoxelLodTerrain *>(cb_data);
 		self->apply_data_block_response(ob);
 	};
-	callbacks.virtual_texture_output_callback = [](void *cb_data, VoxelEngine::BlockDetailTextureOutput &ob) {
+	callbacks.detail_texture_output_callback = [](void *cb_data, VoxelEngine::BlockDetailTextureOutput &ob) {
 		VoxelLodTerrain *self = reinterpret_cast<VoxelLodTerrain *>(cb_data);
 		self->apply_detail_texture_update(ob);
 	};
@@ -186,25 +203,63 @@ void VoxelLodTerrain::set_material(Ref<Material> p_material) {
 	// TODO Update existing block surfaces
 	_material = p_material;
 
-	update_shader_material_pool_template();
+	Ref<ShaderMaterial> shader_material = p_material;
+	const unsigned int lod_count = get_lod_count();
 
 #ifdef TOOLS_ENABLED
 	// Create a fork of the default shader if a new empty ShaderMaterial is assigned
 	if (Engine::get_singleton()->is_editor_hint()) {
-		Ref<ShaderMaterial> sm = p_material;
-		if (sm.is_valid() && sm->get_shader().is_null() && _mesher.is_valid()) {
+		if (shader_material.is_valid() && shader_material->get_shader().is_null() && _mesher.is_valid()) {
 			Ref<ShaderMaterial> default_sm = _mesher->get_default_lod_material();
 			if (default_sm.is_valid()) {
 				Ref<Shader> default_shader = default_sm->get_shader();
 				ZN_ASSERT_RETURN(default_shader.is_valid());
 				Ref<Shader> shader_copy = default_shader->duplicate();
-				sm->set_shader(shader_copy);
+				shader_material->set_shader(shader_copy);
 			}
 		}
 
 		update_configuration_warnings();
 	}
 #endif
+
+	update_shader_material_pool_template();
+
+	// Update existing meshes
+	if (shader_material.is_valid() && _shader_material_pool.get_template().is_valid()) {
+		for (unsigned int lod_index = 0; lod_index < lod_count; ++lod_index) {
+			VoxelMeshMap<VoxelMeshBlockVLT> &map = _mesh_maps_per_lod[lod_index];
+
+			map.for_each_block([this](VoxelMeshBlockVLT &block) { //
+				Ref<ShaderMaterial> sm = _shader_material_pool.allocate();
+				Ref<ShaderMaterial> prev_material = block.get_shader_material();
+				if (prev_material.is_valid()) {
+					ZN_ASSERT_RETURN(sm.is_valid());
+					// Each block can have specific shader parameters so we have to keep them
+					copy_vlt_block_params(**prev_material, **sm);
+				}
+				block.set_shader_material(sm);
+			});
+		}
+
+	} else {
+		// The material isn't ShaderMaterial, fallback. Will probably not work correctly with transition meshes
+		for (unsigned int lod_index = 0; lod_index < lod_count; ++lod_index) {
+			VoxelMeshMap<VoxelMeshBlockVLT> &map = _mesh_maps_per_lod[lod_index];
+
+			map.for_each_block([&p_material](VoxelMeshBlockVLT &block) { //
+				block.set_shader_material(Ref<ShaderMaterial>());
+
+				Ref<Mesh> mesh = block.get_mesh();
+				if (mesh.is_valid()) {
+					const int surface_count = mesh->get_surface_count();
+					for (int surface_index = 0; surface_index < surface_count; ++surface_index) {
+						mesh->surface_set_material(surface_index, p_material);
+					}
+				}
+			});
+		}
+	}
 }
 
 unsigned int VoxelLodTerrain::get_data_block_size() const {
@@ -235,8 +290,8 @@ void VoxelLodTerrain::set_stream(Ref<VoxelStream> p_stream) {
 #ifdef TOOLS_ENABLED
 	if (p_stream.is_valid()) {
 		if (Engine::get_singleton()->is_editor_hint()) {
-			Ref<Script> script = p_stream->get_script();
-			if (script.is_valid()) {
+			Ref<Script> stream_script = p_stream->get_script();
+			if (stream_script.is_valid()) {
 				// Safety check. It's too easy to break threads by making a script reload.
 				// You can turn it back on, but be careful.
 				_update_data->settings.run_stream_in_editor = false;
@@ -266,8 +321,8 @@ void VoxelLodTerrain::set_generator(Ref<VoxelGenerator> p_generator) {
 #ifdef TOOLS_ENABLED
 	if (p_generator.is_valid()) {
 		if (Engine::get_singleton()->is_editor_hint()) {
-			Ref<Script> script = p_generator->get_script();
-			if (script.is_valid()) {
+			Ref<Script> generator_script = p_generator->get_script();
+			if (generator_script.is_valid()) {
 				// Safety check. It's too easy to break threads by making a script reload.
 				// You can turn it back on, but be careful.
 				_update_data->settings.run_stream_in_editor = false;
@@ -361,7 +416,7 @@ void VoxelLodTerrain::_on_stream_params_changed() {
 
 	reset_maps();
 	// TODO Size other than 16 is not really supported though.
-	// also this code isn't right, it doesnt update the other lods
+	// also this code isn't right, it doesn't update the other lods
 	//_data->lods[0].map.create(p_block_size_po2, 0);
 
 	Ref<VoxelGenerator> generator = get_generator();
@@ -515,7 +570,7 @@ void VoxelLodTerrain::set_mesh_block_active(VoxelMeshBlockVLT &block, bool activ
 
 // Marks intersecting blocks in the area as modified, updates LODs and schedules remeshing.
 // The provided box must be at LOD0 coordinates.
-void VoxelLodTerrain::post_edit_area(Box3i p_box) {
+void VoxelLodTerrain::post_edit_area(Box3i p_box, bool update_mesh) {
 	ZN_PROFILE_SCOPE();
 	// TODO Better decoupling is needed here.
 	// In the past this padding was necessary for mesh blocks because visuals depend on neighbor voxels.
@@ -527,7 +582,7 @@ void VoxelLodTerrain::post_edit_area(Box3i p_box) {
 	const Box3i box = p_box.padded(1);
 	{
 		MutexLock lock(_update_data->state.blocks_pending_lodding_lod0_mutex);
-		_data->mark_area_modified(box, &_update_data->state.blocks_pending_lodding_lod0);
+		_data->mark_area_modified(box, &_update_data->state.blocks_pending_lodding_lod0, update_mesh);
 	}
 
 #ifdef TOOLS_ENABLED
@@ -536,7 +591,7 @@ void VoxelLodTerrain::post_edit_area(Box3i p_box) {
 	}
 #endif
 
-	if (_instancer != nullptr) {
+	if (_instancer != nullptr && update_mesh) {
 		_instancer->on_area_edited(p_box);
 	}
 }
@@ -595,7 +650,7 @@ void VoxelLodTerrain::set_view_distance(int p_distance_in_voxels) {
 void VoxelLodTerrain::start_updater() {
 	Ref<VoxelMesherBlocky> blocky_mesher = _mesher;
 	if (blocky_mesher.is_valid()) {
-		Ref<VoxelBlockyLibrary> library = blocky_mesher->get_library();
+		Ref<VoxelBlockyLibraryBase> library = blocky_mesher->get_library();
 		if (library.is_valid()) {
 			// TODO Any way to execute this function just after the TRES resource loader has finished to load?
 			// VoxelLibrary should be baked ahead of time, like MeshLibrary
@@ -628,18 +683,26 @@ void VoxelLodTerrain::stop_updater() {
 }
 
 void VoxelLodTerrain::start_streamer() {
-	if (is_full_load_mode_enabled() && get_stream().is_valid()) {
-		// TODO May want to defer this to be sure it's not done multiple times.
-		// This would be a side-effect of setting properties one by one, either by scene loader or by script
+	if (is_full_load_mode_enabled()) {
+		if (get_stream().is_valid()) {
+			// TODO May want to defer this to be sure it's not done multiple times.
+			// This would be a side-effect of setting properties one by one, either by scene loader or by script
 
-		ZN_PRINT_VERBOSE(format("Request all blocks for volume {}", _volume_id));
-		ZN_ASSERT(_streaming_dependency != nullptr);
+			ZN_PRINT_VERBOSE(format("Request all blocks for volume {}", _volume_id));
+			ZN_ASSERT(_streaming_dependency != nullptr);
 
-		LoadAllBlocksDataTask *task = memnew(LoadAllBlocksDataTask);
-		task->volume_id = _volume_id;
-		task->stream_dependency = _streaming_dependency;
+			_data->set_full_load_completed(false);
 
-		VoxelEngine::get_singleton().push_async_io_task(task);
+			LoadAllBlocksDataTask *task = memnew(LoadAllBlocksDataTask);
+			task->volume_id = _volume_id;
+			task->stream_dependency = _streaming_dependency;
+			task->data = _data;
+
+			VoxelEngine::get_singleton().push_async_io_task(task);
+
+		} else {
+			_data->set_full_load_completed(true);
+		}
 	}
 }
 
@@ -1043,7 +1106,14 @@ void VoxelLodTerrain::process(float delta) {
 			generator = get_generator();
 		}
 		if (generator.is_valid() && generator->supports_shaders() &&
-				generator->get_virtual_rendering_shader() == nullptr) {
+				generator->get_detail_rendering_shader() == nullptr) {
+			generator->compile_shaders();
+		}
+	}
+	if (get_generator_use_gpu()) {
+		Ref<VoxelGenerator> generator = get_generator();
+		if (generator.is_valid() && generator->supports_shaders() &&
+				generator->get_block_rendering_shader() == nullptr) {
 			generator->compile_shaders();
 		}
 	}
@@ -1083,7 +1153,8 @@ void VoxelLodTerrain::process(float delta) {
 			VoxelEngine::get_singleton().push_async_task(task);
 
 		} else {
-			task->run(ThreadedTaskContext{ 0 });
+			ThreadedTaskContext ctx{ 0, ThreadedTaskContext::STATUS_COMPLETE };
+			task->run(ctx);
 			memdelete(task);
 			apply_main_thread_update_tasks();
 		}
@@ -1207,7 +1278,7 @@ void VoxelLodTerrain::apply_main_thread_update_tasks() {
 					const Vector3 block_center = volume_transform.xform(
 							to_vec3(block->position * mesh_block_size + Vector3iUtil::create(mesh_block_size / 2)));
 
-					// Dont do fading for blocks behind the camera
+					// Don't do fading for blocks behind the camera.
 					if (camera.forward.dot(block_center - camera.position) > 0.f) {
 						FadingOutMesh item;
 
@@ -1256,7 +1327,12 @@ void VoxelLodTerrain::apply_main_thread_update_tasks() {
 			if (e.tracker->has_next_tasks()) {
 				ERR_PRINT("Completed async edit had next tasks?");
 			}
-			post_edit_area(e.box);
+			post_edit_area(e.box,
+					// Assume the async edit modified voxels in a way it affects the mesh.
+					// Won't be the case if changed only metadata, but so far there is no use case for using an async
+					// edit to change metadata. Metadata is not even used often in smooth terrains (which
+					// VoxelLodTerrain is mostly for)
+					true);
 			return true;
 
 		} else if (e.tracker->is_aborted()) {
@@ -1286,13 +1362,13 @@ void VoxelLodTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob
 	if (ob.type == VoxelEngine::BlockDataOutput::TYPE_SAVED) {
 		// That's a save confirmation event.
 		// Note: in the future, if blocks don't get copied before being sent for saving,
-		// we will need to use block versionning to know when we can reset the `modified` flag properly
+		// we will need to use block versioning to know when we can reset the `modified` flag properly
 
 		// TODO Now that's the case. Use version? Or just keep copying?
 		return;
 	}
 
-	if (ob.lod >= get_lod_count()) {
+	if (ob.lod_index >= get_lod_count()) {
 		// That block was requested at a time where LOD was higher... drop it
 		++_stats.dropped_block_loads;
 		return;
@@ -1300,11 +1376,12 @@ void VoxelLodTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob
 
 	// Initial load will be true when we requested data without specifying specific positions,
 	// so we wouldn't know which ones to expect. This is the case of full load mode.
-	VoxelLodTerrainUpdateData::Lod &lod = _update_data->state.lods[ob.lod];
+	VoxelLodTerrainUpdateData::Lod &lod = _update_data->state.lods[ob.lod_index];
 	if (!ob.initial_load) {
 		if (!thread_safe_contains(lod.loading_blocks, ob.position, lod.loading_blocks_mutex)) {
 			// That block was not requested, or is no longer needed. drop it...
-			ZN_PRINT_VERBOSE(format("Ignoring block {} lod {}, it was not in loading blocks", ob.position, ob.lod));
+			ZN_PRINT_VERBOSE(
+					format("Ignoring block {} lod {}, it was not in loading blocks", ob.position, ob.lod_index));
 			++_stats.dropped_block_loads;
 			return;
 		}
@@ -1323,7 +1400,7 @@ void VoxelLodTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob
 		return;
 	}
 
-	VoxelDataBlock block(ob.voxels, ob.lod);
+	VoxelDataBlock block(ob.voxels, ob.lod_index);
 	block.set_edited(ob.type == VoxelEngine::BlockDataOutput::TYPE_LOADED);
 
 	if (block.has_voxels() && block.get_voxels_const().get_size() != Vector3iUtil::create(_data->get_block_size())) {
@@ -1348,7 +1425,7 @@ void VoxelLodTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob
 	}
 
 	if (_instancer != nullptr && ob.instances != nullptr) {
-		_instancer->on_data_block_loaded(ob.position, ob.lod, std::move(ob.instances));
+		_instancer->on_data_block_loaded(ob.position, ob.lod_index, std::move(ob.instances));
 	}
 }
 
@@ -1426,7 +1503,7 @@ void VoxelLodTerrain::apply_mesh_update(VoxelEngine::BlockMeshOutput &ob) {
 		}
 	} else {
 		// Can't build meshes in threads, do it here
-		build_mesh(to_span_const(mesh_data.surfaces), mesh_data.primitive_type, mesh_data.mesh_flags, _material);
+		mesh = build_mesh(to_span_const(mesh_data.surfaces), mesh_data.primitive_type, mesh_data.mesh_flags, _material);
 	}
 
 	if (mesh.is_null()) {
@@ -1604,7 +1681,7 @@ static void try_apply_parent_virtual_texture_to_block(VoxelMeshBlockVLT &block, 
 	const Vector4 parent_offset_and_scale =
 			parent_material->get_shader_parameter(sn.u_voxel_virtual_texture_offset_scale);
 	const Vector3i parent_offset(parent_offset_and_scale.x, parent_offset_and_scale.y, parent_offset_and_scale.z);
-	const int fallback_level = parent_block.virtual_texture_fallback_level + 1;
+	const int fallback_level = parent_block.detail_texture_fallback_level + 1;
 
 	const Vector3i offset = parent_offset + (bpos - (parent_bpos * 2)) * (mesh_block_size >> fallback_level);
 	const float scale = 1.f / float(1 << fallback_level);
@@ -1618,7 +1695,7 @@ static void try_apply_parent_virtual_texture_to_block(VoxelMeshBlockVLT &block, 
 			get_detail_texture_tile_resolution_for_lod(detail_texture_settings, parent_lod_index);
 	material.set_shader_parameter(sn.u_voxel_virtual_texture_tile_size, tile_size);
 
-	block.virtual_texture_fallback_level = fallback_level;
+	block.detail_texture_fallback_level = fallback_level;
 }
 
 void VoxelLodTerrain::try_apply_parent_detail_texture_to_block(VoxelMeshBlockVLT &block, Vector3i bpos) {
@@ -1694,18 +1771,18 @@ void VoxelLodTerrain::apply_detail_texture_update_to_block(
 		RWLockRead rlock(lod.mesh_map_state.map_lock);
 		auto mesh_block_state_it = lod.mesh_map_state.map.find(block.position);
 		if (mesh_block_state_it != lod.mesh_map_state.map.end()) {
-			VoxelLodTerrainUpdateData::VirtualTextureState expected_vt_state =
-					VoxelLodTerrainUpdateData::VIRTUAL_TEXTURE_PENDING;
+			VoxelLodTerrainUpdateData::DetailTextureState expected_dt_state =
+					VoxelLodTerrainUpdateData::DETAIL_TEXTURE_PENDING;
 			// If it was PENDING, set it to IDLE.
-			mesh_block_state_it->second.virtual_texture_state.compare_exchange_strong(
-					expected_vt_state, VoxelLodTerrainUpdateData::VIRTUAL_TEXTURE_IDLE);
+			mesh_block_state_it->second.detail_texture_state.compare_exchange_strong(
+					expected_dt_state, VoxelLodTerrainUpdateData::DETAIL_TEXTURE_IDLE);
 			// TODO If the mesh was modified again since, we need to schedule an extra update for the virtual texture to
 			// catch up. But for now I'm not sure if there is much value in doing so. It can get updated by the next
 			// edit. Scheduling an update from here isn't mildly inconvenient due to threading.
 		}
 	}
 
-	block.virtual_texture_fallback_level = 0;
+	block.detail_texture_fallback_level = 0;
 }
 
 void VoxelLodTerrain::process_deferred_collision_updates(uint32_t timeout_msec) {
@@ -1895,7 +1972,7 @@ void VoxelLodTerrain::set_instancer(VoxelInstancer *instancer) {
 	_instancer = instancer;
 }
 
-// This function is primarily intented for editor use cases at the moment.
+// This function is primarily intended for editor use cases at the moment.
 // It will be slower than using the instancing generation events,
 // because it has to query VisualServer, which then allocates and decodes vertex buffers (assuming they are cached).
 Array VoxelLodTerrain::get_mesh_block_surface(Vector3i block_pos, int lod_index) const {
@@ -2031,6 +2108,23 @@ void VoxelLodTerrain::remesh_all_blocks() {
 	}
 }
 
+bool VoxelLodTerrain::is_area_meshed(const Box3i &box_in_voxels, unsigned int lod_index) const {
+	const Box3i box_in_blocks = box_in_voxels.downscaled(1 << (get_mesh_block_size_pow2() + lod_index));
+	// We have to check this separate map instead of the mesh map, because the mesh map will not contain blocks in areas
+	// that have no mesh (one reason is so it reduces the time it takes to update all mesh positions when the terrain is
+	// moved)
+	VoxelLodTerrainUpdateData::MeshMapState &mms = _update_data->state.lods[lod_index].mesh_map_state;
+	RWLockRead rlock(mms.map_lock);
+	return box_in_blocks.all_cells_match([&mms](Vector3i bpos) {
+		auto it = mms.map.find(bpos);
+		if (it == mms.map.end()) {
+			return false;
+		}
+		const VoxelLodTerrainUpdateData::MeshBlockState &block = it->second;
+		return block.state == VoxelLodTerrainUpdateData::MESH_UP_TO_DATE;
+	});
+}
+
 void VoxelLodTerrain::set_voxel_bounds(Box3i p_box) {
 	_update_data->wait_for_end_of_task();
 	Box3i bounds_in_voxels =
@@ -2126,20 +2220,29 @@ Ref<VoxelGenerator> VoxelLodTerrain::get_normalmap_generator_override() const {
 void VoxelLodTerrain::set_normalmap_generator_override_begin_lod_index(int lod_index) {
 	ERR_FAIL_COND(lod_index < 0);
 	ERR_FAIL_COND(lod_index > static_cast<int>(constants::MAX_LOD));
-	_update_data->settings.virtual_texture_generator_override_begin_lod_index = lod_index;
+	_update_data->settings.detail_texture_generator_override_begin_lod_index = lod_index;
 }
 
 int VoxelLodTerrain::get_normalmap_generator_override_begin_lod_index() const {
-	return _update_data->settings.virtual_texture_generator_override_begin_lod_index;
+	return _update_data->settings.detail_texture_generator_override_begin_lod_index;
 }
 
 void VoxelLodTerrain::set_normalmap_use_gpu(bool enabled) {
-	_update_data->settings.virtual_textures_use_gpu = enabled;
+	_update_data->settings.detail_textures_use_gpu = enabled;
 	update_configuration_warnings();
 }
 
 bool VoxelLodTerrain::get_normalmap_use_gpu() const {
-	return _update_data->settings.virtual_textures_use_gpu;
+	return _update_data->settings.detail_textures_use_gpu;
+}
+
+void VoxelLodTerrain::set_generator_use_gpu(bool enabled) {
+	_update_data->settings.generator_use_gpu = enabled;
+	update_configuration_warnings();
+}
+
+bool VoxelLodTerrain::get_generator_use_gpu() const {
+	return _update_data->settings.generator_use_gpu;
 }
 
 #ifdef TOOLS_ENABLED
@@ -2156,6 +2259,14 @@ void VoxelLodTerrain::get_configuration_warnings(PackedStringArray &warnings) co
 	Ref<ShaderMaterial> shader_material = _material;
 	if (shader_material.is_valid() && shader_material->get_shader().is_null()) {
 		warnings.append(ZN_TTR("The assigned {0} has no shader").format(varray(ShaderMaterial::get_class_static())));
+	}
+
+	if (get_generator_use_gpu()) {
+		Ref<VoxelGenerator> generator = get_generator();
+		if (generator.is_valid() && !generator->supports_shaders()) {
+			warnings.append(String("`use_gpu_generation` is enabled, but {0} does not support running on the GPU.")
+									.format(varray(generator->get_class())));
+		}
 	}
 
 	if (mesher.is_valid()) {
@@ -2207,9 +2318,15 @@ void VoxelLodTerrain::get_configuration_warnings(PackedStringArray &warnings) co
 			}
 		}
 
-		// Virtual textures
+		// Detail textures
 		Ref<VoxelGenerator> generator = get_generator();
 		if (generator.is_valid()) {
+			if (get_generator_use_gpu() && !generator->supports_shaders()) {
+				warnings.append(ZN_TTR("The option to use GPU when generating voxels is enabled, but the current "
+									   "generator ({0}) does not support GLSL.")
+										.format(varray(generator->get_class())));
+			}
+
 			if (is_normalmap_enabled()) {
 				if (!generator->supports_series_generation()) {
 					warnings.append(ZN_TTR(
@@ -2562,7 +2679,7 @@ void VoxelLodTerrain::update_gizmos() {
 			const Vector3i block_offset_lod0 = block_pos_maxlod << (lod_count - 1);
 
 			octree.for_each_leaf([&dr, block_offset_lod0, mesh_block_size, parent_transform, lod_count_f](
-										 Vector3i node_pos, int lod_index, const LodOctree::NodeData &data) {
+										 Vector3i node_pos, int lod_index, const LodOctree::NodeData &node_data) {
 				//
 				const int size = mesh_block_size << lod_index;
 				const Vector3i voxel_pos = mesh_block_size * ((node_pos << lod_index) + block_offset_lod0);
@@ -2635,6 +2752,16 @@ void VoxelLodTerrain::update_gizmos() {
 		}
 	}
 
+	// Modifiers
+	if (debug_get_draw_flag(DEBUG_DRAW_MODIFIER_BOUNDS)) {
+		const VoxelModifierStack &modifiers = _data->get_modifiers();
+		modifiers.for_each_modifier([&dr](const VoxelModifier &modifier) {
+			const AABB aabb = modifier.get_aabb();
+			const Transform3D t(Basis().scaled(aabb.size), aabb.get_center() - aabb.size * 0.5);
+			dr.draw_box_mm(t, Color8(0, 0, 255, 255));
+		});
+	}
+
 	dr.end();
 }
 
@@ -2646,7 +2773,7 @@ Array VoxelLodTerrain::_b_debug_print_sdf_top_down(Vector3i center, Vector3i ext
 
 	Array image_array;
 	const unsigned int lod_count = get_lod_count();
-	const VoxelData &data = *_data;
+	const VoxelData &voxel_data = *_data;
 
 	for (unsigned int lod_index = 0; lod_index < lod_count; ++lod_index) {
 		const Box3i world_box = Box3i::from_center_extents(center >> lod_index, extents >> lod_index);
@@ -2658,11 +2785,11 @@ Array VoxelLodTerrain::_b_debug_print_sdf_top_down(Vector3i center, Vector3i ext
 		VoxelBufferInternal buffer;
 		buffer.create(world_box.size);
 
-		world_box.for_each_cell([world_box, &buffer, &data](const Vector3i &world_pos) {
+		world_box.for_each_cell([world_box, &buffer, &voxel_data](const Vector3i &world_pos) {
 			const Vector3i rpos = world_pos - world_box.pos;
 			VoxelSingleValue v;
 			v.f = 1.f;
-			v = data.get_voxel(world_pos, VoxelBufferInternal::CHANNEL_SDF, v);
+			v = voxel_data.get_voxel(world_pos, VoxelBufferInternal::CHANNEL_SDF, v);
 			buffer.set_voxel_f(v.f, rpos.x, rpos.y, rpos.z, VoxelBufferInternal::CHANNEL_SDF);
 		});
 
@@ -2740,6 +2867,11 @@ int /*Error*/ VoxelLodTerrain::_b_debug_dump_as_scene(String fpath, bool include
 	return save_result;
 }
 
+bool VoxelLodTerrain::_b_is_area_meshed(AABB aabb, int lod_index) const {
+	ERR_FAIL_INDEX_V(lod_index, static_cast<int>(constants::MAX_LOD), false);
+	return is_area_meshed(Box3i(aabb.position, aabb.size), lod_index);
+}
+
 void VoxelLodTerrain::_bind_methods() {
 	// Material
 
@@ -2798,6 +2930,9 @@ void VoxelLodTerrain::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_run_stream_in_editor"), &VoxelLodTerrain::set_run_stream_in_editor);
 	ClassDB::bind_method(D_METHOD("is_stream_running_in_editor"), &VoxelLodTerrain::is_stream_running_in_editor);
+
+	ClassDB::bind_method(
+			D_METHOD("is_area_meshed", "area_in_voxels", "lod_index"), &VoxelLodTerrain::_b_is_area_meshed);
 
 	// Normalmaps
 
@@ -2858,6 +2993,9 @@ void VoxelLodTerrain::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_process_callback", "mode"), &VoxelLodTerrain::set_process_callback);
 	ClassDB::bind_method(D_METHOD("get_process_callback"), &VoxelLodTerrain::get_process_callback);
 
+	ClassDB::bind_method(D_METHOD("set_generator_use_gpu", "enabled"), &VoxelLodTerrain::set_generator_use_gpu);
+	ClassDB::bind_method(D_METHOD("get_generator_use_gpu"), &VoxelLodTerrain::get_generator_use_gpu);
+
 	// Debug
 
 	ClassDB::bind_method(D_METHOD("get_statistics"), &VoxelLodTerrain::_b_get_statistics);
@@ -2894,6 +3032,7 @@ void VoxelLodTerrain::_bind_methods() {
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_EDIT_BOXES);
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_VOLUME_BOUNDS);
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_EDITED_BLOCKS);
+	BIND_ENUM_CONSTANT(DEBUG_DRAW_MODIFIER_BOUNDS);
 	BIND_ENUM_CONSTANT(DEBUG_DRAW_FLAGS_COUNT);
 
 	ADD_GROUP("Bounds", "");
@@ -2952,6 +3091,7 @@ void VoxelLodTerrain::_bind_methods() {
 			"is_full_load_mode_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "threaded_update_enabled"), "set_threaded_update_enabled",
 			"is_threaded_update_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_gpu_generation"), "set_generator_use_gpu", "get_generator_use_gpu");
 }
 
 } // namespace zylann::voxel

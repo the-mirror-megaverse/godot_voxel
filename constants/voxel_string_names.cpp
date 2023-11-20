@@ -31,6 +31,9 @@ VoxelStringNames::VoxelStringNames() {
 	block_loaded = StringName("block_loaded");
 	block_unloaded = StringName("block_unloaded");
 
+	mesh_block_entered = StringName("mesh_block_entered");
+	mesh_block_exited = StringName("mesh_block_exited");
+
 	store_colors_in_texture = StringName("store_colors_in_texture");
 	scale = StringName("scale");
 	enable_baked_lighting = StringName("enable_baked_lighting");
@@ -62,12 +65,45 @@ VoxelStringNames::VoxelStringNames() {
 	Add = StringName("Add");
 	Remove = StringName("Remove");
 	EditorIcons = StringName("EditorIcons");
+	EditorFonts = StringName("EditorFonts");
 	Pin = StringName("Pin");
 	ExternalLink = StringName("ExternalLink");
+	Search = StringName("Search");
+	source = StringName("source");
+	_dummy_function = StringName("_dummy_function");
+	grab_focus = StringName("grab_focus");
 #endif
 
 	_rpc_receive_blocks = StringName("_rpc_receive_blocks");
 	_rpc_receive_area = StringName("_rpc_receive_area");
+
+	unnamed = StringName("unnamed");
+	air = StringName("air");
+	cube = StringName("cube");
+
+	axis = StringName("axis");
+	direction = StringName("direction");
+	rotation = StringName("rotation");
+	x = StringName("x");
+	y = StringName("y");
+	z = StringName("z");
+	negative_x = StringName("-x");
+	negative_y = StringName("-y");
+	negative_z = StringName("-z");
+	positive_x = StringName("+x");
+	positive_y = StringName("+y");
+	positive_z = StringName("+z");
+
+	for (unsigned int i = 0; i < ortho_rotation_names.size(); ++i) {
+		ortho_rotation_names[i] = StringName(math::ortho_rotation_to_string(i));
+	}
+
+	for (unsigned int i = 0; i < ortho_rotation_names.size(); ++i) {
+		if (i > 0) {
+			ortho_rotation_enum_hint_string += ",";
+		}
+		ortho_rotation_enum_hint_string += String(math::ortho_rotation_to_string(i));
+	}
 }
 
 } // namespace zylann::voxel

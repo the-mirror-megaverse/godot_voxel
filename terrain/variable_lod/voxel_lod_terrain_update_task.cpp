@@ -622,7 +622,7 @@ static void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 			Vector3 viewer_pos_octree_space;
 			uint32_t &lods_to_update_transitions;
 
-			void create_child(Vector3i node_pos, int lod_index, LodOctree::NodeData &data) {
+			void create_child(Vector3i node_pos, int lod_index, LodOctree::NodeData &node_data) {
 				VoxelLodTerrainUpdateData::Lod &lod = state.lods[lod_index];
 				const Vector3i bpos = node_pos + (block_offset_lod0 >> lod_index);
 				auto mesh_block_it = lod.mesh_map_state.map.find(bpos);
@@ -780,7 +780,7 @@ static void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 	// We used to only update positions based on which blocks were added/removed in the octree update,
 	// which was faster than this. However it missed some spots, which caused annoying cracks to show up.
 	// So instead, when any block changes state in LOD N, we update all transitions in LODs N-1, N, and N+1.
-	// It is unclear yet why the old approach didnt work, maybe because it didn't properly made N-1 and N+1 update.
+	// It is unclear yet why the old approach didn't work, maybe because it didn't properly made N-1 and N+1 update.
 	// If you find a better approach, it has to comply with the validation check below.
 	if (lods_to_update_transitions != 0) {
 		ZN_PROFILE_SCOPE_NAMED("Transition masks");
@@ -849,8 +849,8 @@ static void init_sparse_octree_priority_dependency(PriorityDependency &dep, Vect
 static void request_block_generate(VolumeID volume_id, unsigned int data_block_size,
 		std::shared_ptr<StreamingDependency> &stream_dependency, const std::shared_ptr<VoxelData> &data,
 		Vector3i block_pos, int lod, std::shared_ptr<PriorityDependency::ViewersData> &shared_viewers_data,
-		const Transform3D &volume_transform, float lod_distance, std::shared_ptr<AsyncDependencyTracker> tracker,
-		bool allow_drop, BufferedTaskScheduler &task_scheduler) {
+		const Transform3D &volume_transform, const VoxelLodTerrainUpdateData::Settings &settings,
+		std::shared_ptr<AsyncDependencyTracker> tracker, bool allow_drop, BufferedTaskScheduler &task_scheduler) {
 	//
 	CRASH_COND(data_block_size > 255);
 	CRASH_COND(stream_dependency == nullptr);
@@ -858,18 +858,19 @@ static void request_block_generate(VolumeID volume_id, unsigned int data_block_s
 	// We should not have done this request in the first place if both stream and generator are null
 	ERR_FAIL_COND(stream_dependency->generator.is_null());
 
-	GenerateBlockTask *task = memnew(GenerateBlockTask);
+	GenerateBlockTask *task = ZN_NEW(GenerateBlockTask);
 	task->volume_id = volume_id;
 	task->position = block_pos;
-	task->lod = lod;
+	task->lod_index = lod;
 	task->block_size = data_block_size;
 	task->stream_dependency = stream_dependency;
 	task->tracker = tracker;
 	task->drop_beyond_max_distance = allow_drop;
 	task->data = data;
+	task->use_gpu = settings.generator_use_gpu;
 
 	init_sparse_octree_priority_dependency(task->priority_dependency, block_pos, lod, data_block_size,
-			shared_viewers_data, volume_transform, lod_distance);
+			shared_viewers_data, volume_transform, settings.lod_distance);
 
 	task_scheduler.push_main_task(task);
 }
@@ -889,15 +890,16 @@ static void request_block_load(VolumeID volume_id, unsigned int data_block_size,
 		init_sparse_octree_priority_dependency(priority_dependency, block_pos, lod, data_block_size,
 				shared_viewers_data, volume_transform, settings.lod_distance);
 
-		LoadBlockDataTask *task = memnew(LoadBlockDataTask(volume_id, block_pos, lod, data_block_size,
-				request_instances, stream_dependency, priority_dependency, settings.cache_generated_blocks));
+		LoadBlockDataTask *task = memnew(
+				LoadBlockDataTask(volume_id, block_pos, lod, data_block_size, request_instances, stream_dependency,
+						priority_dependency, settings.cache_generated_blocks, settings.generator_use_gpu, data));
 
 		task_scheduler.push_io_task(task);
 
 	} else if (settings.cache_generated_blocks) {
 		// Directly generate the block without checking the stream.
 		request_block_generate(volume_id, data_block_size, stream_dependency, data, block_pos, lod, shared_viewers_data,
-				volume_transform, settings.lod_distance, nullptr, true, task_scheduler);
+				volume_transform, settings, nullptr, true, task_scheduler);
 
 	} else {
 		ZN_PRINT_WARNING("Requesting a block load when it should not have been necessary");
@@ -944,7 +946,7 @@ static void request_voxel_block_save(VolumeID volume_id, std::shared_ptr<VoxelBu
 	SaveBlockDataTask *task =
 			memnew(SaveBlockDataTask(volume_id, block_pos, lod, data_block_size, voxels, stream_dependency, nullptr));
 
-	// No priority data, saving doesnt need sorting
+	// No priority data, saving doesn't need sorting.
 
 	task_scheduler.push_io_task(task);
 }
@@ -997,27 +999,27 @@ static void send_mesh_requests(VolumeID volume_id, VoxelLodTerrainUpdateData::St
 			// mesh_request.lod = lod_index;
 
 			// We'll allocate this quite often. If it becomes a problem, it should be easy to pool.
-			MeshBlockTask *task = memnew(MeshBlockTask);
+			MeshBlockTask *task = ZN_NEW(MeshBlockTask);
 			task->volume_id = volume_id;
 			task->mesh_block_position = mesh_block_pos;
 			task->lod_index = lod_index;
 			task->lod_hint = true;
 			task->meshing_dependency = meshing_dependency;
-			task->data_block_size = data_block_size;
 			task->data = data_ptr;
 			task->collision_hint = settings.collision_enabled;
 			task->detail_texture_settings = settings.detail_texture_settings;
 			task->detail_texture_generator_override = settings.detail_texture_generator_override;
-			task->virtual_texture_generator_override_begin_lod_index =
-					settings.virtual_texture_generator_override_begin_lod_index;
-			task->virtual_texture_use_gpu = settings.virtual_textures_use_gpu;
+			task->detail_texture_generator_override_begin_lod_index =
+					settings.detail_texture_generator_override_begin_lod_index;
+			task->detail_texture_use_gpu = settings.detail_textures_use_gpu;
+			task->block_generation_use_gpu = settings.generator_use_gpu;
 
-			// Don't update a virtual texture if one update is already processing
+			// Don't update a detail texture if one update is already processing
 			if (settings.detail_texture_settings.enabled &&
 					lod_index >= settings.detail_texture_settings.begin_lod_index &&
-					mesh_block.virtual_texture_state != VoxelLodTerrainUpdateData::VIRTUAL_TEXTURE_PENDING) {
-				mesh_block.virtual_texture_state = VoxelLodTerrainUpdateData::VIRTUAL_TEXTURE_PENDING;
-				task->require_virtual_texture = true;
+					mesh_block.detail_texture_state != VoxelLodTerrainUpdateData::DETAIL_TEXTURE_PENDING) {
+				mesh_block.detail_texture_state = VoxelLodTerrainUpdateData::DETAIL_TEXTURE_PENDING;
+				task->require_detail_texture = true;
 			}
 
 			const Box3i data_box =
@@ -1025,7 +1027,7 @@ static void send_mesh_requests(VolumeID volume_id, VoxelLodTerrainUpdateData::St
 							.padded(1);
 
 			// Iteration order matters for thread access.
-			// The array also implicitely encodes block position due to the convention being used,
+			// The array also implicitly encodes block position due to the convention being used,
 			// so there is no need to also include positions in the request
 			data.get_blocks_with_voxel_data(data_box, lod_index, to_span(task->blocks));
 			task->blocks_count = Vector3iUtil::get_volume(data_box.size);
@@ -1121,8 +1123,7 @@ static std::shared_ptr<AsyncDependencyTracker> preload_boxes_async(VoxelLodTerra
 		for (unsigned int i = 0; i < todo.size(); ++i) {
 			const TaskArguments args = todo[i];
 			request_block_generate(volume_id, data_block_size, stream_dependency, data_ptr, args.block_pos,
-					args.lod_index, shared_viewers_data, volume_transform, settings.lod_distance, tracker, false,
-					task_scheduler);
+					args.lod_index, shared_viewers_data, volume_transform, settings, tracker, false, task_scheduler);
 		}
 
 	} else if (next_tasks.size() > 0) {
@@ -1151,7 +1152,7 @@ static void process_async_edits(VoxelLodTerrainUpdateData::State &state,
 			VoxelLodTerrainUpdateData::AsyncEdit &edit = state.pending_async_edits[edit_index];
 			CRASH_COND(edit.task_tracker->has_next_tasks());
 
-			// Not sure if worth doing, I dont think tasks can be aborted before even being scheduled
+			// Not sure if worth doing, I don't think tasks can be aborted before even being scheduled.
 			if (edit.task_tracker->is_aborted()) {
 				ZN_PRINT_VERBOSE("Aborted async edit");
 				memdelete(edit.task);
@@ -1208,7 +1209,7 @@ static void process_changed_generated_areas(VoxelLodTerrainUpdateData::State &st
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void VoxelLodTerrainUpdateTask::run(ThreadedTaskContext ctx) {
+void VoxelLodTerrainUpdateTask::run(ThreadedTaskContext &ctx) {
 	ZN_PROFILE_SCOPE();
 
 	struct SetCompleteOnScopeExit {

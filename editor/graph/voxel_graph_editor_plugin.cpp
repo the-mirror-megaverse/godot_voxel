@@ -1,11 +1,14 @@
 #include "voxel_graph_editor_plugin.h"
+#include "../../constants/voxel_string_names.h"
 #include "../../generators/graph/voxel_generator_graph.h"
 #include "../../terrain/voxel_node.h"
+#include "../../util/container_funcs.h"
 #include "../../util/godot/classes/button.h"
 #include "../../util/godot/classes/editor_interface.h"
 #include "../../util/godot/classes/editor_selection.h"
 #include "../../util/godot/classes/node.h"
 #include "../../util/godot/classes/object.h"
+#include "../../util/godot/classes/resource_saver.h"
 #include "../../util/godot/core/callable.h"
 #include "../../util/godot/core/string.h"
 #include "../../util/godot/editor_scale.h"
@@ -20,7 +23,11 @@ namespace zylann::voxel {
 
 using namespace pg;
 
-VoxelGraphEditorPlugin::VoxelGraphEditorPlugin() {
+VoxelGraphEditorPlugin::VoxelGraphEditorPlugin() {}
+
+// TODO GDX: Can't initialize EditorPlugins in their constructor when they access EditorNode.
+// See https://github.com/godotengine/godot-cpp/issues/1179
+void VoxelGraphEditorPlugin::init() {
 	// EditorInterface *ed = get_editor_interface();
 	_graph_editor = memnew(VoxelGraphEditor);
 	_graph_editor->set_custom_minimum_size(Size2(0, 300) * EDSCALE);
@@ -96,6 +103,14 @@ void VoxelGraphEditorPlugin::_zn_edit(Object *p_object) {
 	}
 
 	_graph_editor->set_undo_redo(get_undo_redo()); // UndoRedo isn't available in constructor
+
+	if (generator.is_valid()) {
+		const VoxelStringNames &sn = VoxelStringNames::get_singleton();
+		Callable callable = ZN_GODOT_CALLABLE_MP(this, VoxelGraphEditorPlugin, _on_generator_changed);
+		if (!generator->is_connected(sn.changed, callable)) {
+			generator->connect(sn.changed, callable);
+		}
+	}
 
 	_graph_editor->set_generator(generator);
 	if (generator.is_null()) {
@@ -257,8 +272,36 @@ void VoxelGraphEditorPlugin::_on_graph_editor_window_close_requested() {
 	dock_graph_editor();
 }
 
+void VoxelGraphEditorPlugin::_on_generator_changed() {
+	// This is to workaround the fact Godot won't save resource A if we edit a built-in resource B inside it from a
+	// custom editor with UndoRedoManager.
+	//
+	// So far from my experience, Godot's main way of detecting if a resource has changed is by having it
+	// appear in UndoRedo actions. But if a resource is built-in (embedded in another), it will not be saved with Ctrl+S
+	// unless the resource that contains it is saved. Sadly, Godot devs I discussed with so far seem to be unaware of
+	// how this situation is supposed to be handled with custom editors. As if it was an edge case that was somehow
+	// luckily avoided in the engine, or dealt with using ad-hoc per-case hacks.
+	// There is `Object::set_edited` and `Resource::owners`, which are used in arbitrary places of the editor, but of
+	// course not exposed to scripts or extensions and no idea how they work with nesting...
+	// Maybe I haven't yet encountered The Dev Who Knows...
+	//
+	// This workaround might not even be enough if the edited graph is nested deeper. Pushing to the extreme, we would
+	// have to trace back containing resources recursively until we find the one with a file path, and tell Godot that
+	// it needs to be marked for saving, but that's just incredibly tedious to do, as resources don't just have "parent"
+	// properties like nodes do...
+	//
+	// See https://github.com/godotengine/godot-proposals/discussions/7168
+	Ref<VoxelGeneratorGraph> generator = _graph_editor->get_generator();
+	if (generator.is_valid()) {
+		set_object_edited(**generator);
+	}
+}
+
 void VoxelGraphEditorPlugin::_notification(int p_what) {
-	if (p_what == NOTIFICATION_EXIT_TREE) {
+	if (p_what == NOTIFICATION_ENTER_TREE) {
+		init();
+
+	} else if (p_what == NOTIFICATION_EXIT_TREE) {
 		for (Ref<VoxelGraphNodeInspectorWrapper> &w : _node_wrappers) {
 			ERR_CONTINUE(w.is_null());
 			w->detach_from_graph_editor();
@@ -359,6 +402,7 @@ void VoxelGraphEditorPlugin::_bind_methods() {
 			D_METHOD("_on_graph_editor_popout_requested"), &VoxelGraphEditorPlugin::_on_graph_editor_popout_requested);
 	ClassDB::bind_method(D_METHOD("_on_graph_editor_window_close_requested"),
 			&VoxelGraphEditorPlugin::_on_graph_editor_window_close_requested);
+	ClassDB::bind_method(D_METHOD("_on_generator_changed"), &VoxelGraphEditorPlugin::_on_generator_changed);
 #endif
 	ClassDB::bind_method(D_METHOD("_hide_deferred"), &VoxelGraphEditorPlugin::_hide_deferred);
 }

@@ -4,7 +4,7 @@
 #include "../../util/godot/classes/mesh.h"
 #include "../../util/thread/rw_lock.h"
 #include "../voxel_mesher.h"
-#include "voxel_blocky_library.h"
+#include "voxel_blocky_library_base.h"
 
 #include <vector>
 
@@ -21,8 +21,8 @@ public:
 	VoxelMesherBlocky();
 	~VoxelMesherBlocky();
 
-	void set_library(Ref<VoxelBlockyLibrary> library);
-	Ref<VoxelBlockyLibrary> get_library() const;
+	void set_library(Ref<VoxelBlockyLibraryBase> library);
+	Ref<VoxelBlockyLibraryBase> get_library() const;
 
 	void set_occlusion_darkness(float darkness);
 	float get_occlusion_darkness() const;
@@ -32,7 +32,13 @@ public:
 
 	void build(VoxelMesher::Output &output, const VoxelMesher::Input &input) override;
 
-	Ref<Resource> duplicate(bool p_subresources = false) const ZN_OVERRIDE_UNLESS_GODOT_EXTENSION;
+	// TODO GDX: Resource::duplicate() cannot be overriden (while it can in modules).
+	// This will lead to performance degradation and maybe unexpected behavior
+#if defined(ZN_GODOT)
+	Ref<Resource> duplicate(bool p_subresources = false) const override;
+#elif defined(ZN_GODOT_EXTENSION)
+	Ref<Resource> duplicate(bool p_subresources = false) const;
+#endif
 
 	int get_used_channels_mask() const override;
 
@@ -77,7 +83,7 @@ private:
 	struct Parameters {
 		float baked_occlusion_darkness = 0.8;
 		bool bake_occlusion = true;
-		Ref<VoxelBlockyLibrary> library;
+		Ref<VoxelBlockyLibraryBase> library;
 	};
 
 	struct Cache {

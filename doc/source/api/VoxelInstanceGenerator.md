@@ -114,7 +114,7 @@ How much member noise also affects the scale of instances.
 
 Offsets spawned instances along the normal of the ground.
 
-The normal depends on member VoxelInstancer.up_node and is also affected by member vertical_alignment.
+The normal depends on member VoxelInstancer.up_mode and is also affected by member vertical_alignment.
 
 - [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html)<span id="i_random_rotation"></span> **random_rotation** = true
 
@@ -136,6 +136,6 @@ If 0, they will completely align with the ground.
 
 If 1, they will completely align with whichever direction is considered "up".
 
-This depends on member VoxelInstancer.up_node.
+This depends on member VoxelInstancer.up_mode.
 
-_Generated on Mar 26, 2023_
+_Generated on Jul 23, 2023_

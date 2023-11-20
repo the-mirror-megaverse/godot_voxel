@@ -15,16 +15,19 @@ std::atomic_int g_debug_load_block_tasks_count = { 0 };
 
 LoadBlockDataTask::LoadBlockDataTask(VolumeID p_volume_id, Vector3i p_block_pos, uint8_t p_lod, uint8_t p_block_size,
 		bool p_request_instances, std::shared_ptr<StreamingDependency> p_stream_dependency,
-		PriorityDependency p_priority_dependency, bool generate_cache_data) :
+		PriorityDependency p_priority_dependency, bool generate_cache_data, bool generator_use_gpu,
+		const std::shared_ptr<VoxelData> &vdata) :
 		_priority_dependency(p_priority_dependency),
 		_position(p_block_pos),
 		_volume_id(p_volume_id),
-		_lod(p_lod),
+		_lod_index(p_lod),
 		_block_size(p_block_size),
 		_request_instances(p_request_instances),
 		_generate_cache_data(generate_cache_data),
+		_generator_use_gpu(generator_use_gpu),
 		//_request_voxels(true),
-		_stream_dependency(p_stream_dependency) {
+		_stream_dependency(p_stream_dependency),
+		_voxel_data(vdata) {
 	//
 	++g_debug_load_block_tasks_count;
 }
@@ -37,7 +40,7 @@ int LoadBlockDataTask::debug_get_running_count() {
 	return g_debug_load_block_tasks_count;
 }
 
-void LoadBlockDataTask::run(zylann::ThreadedTaskContext ctx) {
+void LoadBlockDataTask::run(zylann::ThreadedTaskContext &ctx) {
 	ZN_DSTACK();
 	ZN_PROFILE_SCOPE();
 
@@ -45,7 +48,7 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext ctx) {
 	Ref<VoxelStream> stream = _stream_dependency->stream;
 	CRASH_COND(stream.is_null());
 
-	const Vector3i origin_in_voxels = (_position << _lod) * _block_size;
+	const Vector3i origin_in_voxels = (_position << _lod_index) * _block_size;
 
 	ERR_FAIL_COND(_voxels != nullptr);
 	_voxels = make_shared_instance<VoxelBufferInternal>();
@@ -57,7 +60,7 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext ctx) {
 
 	// TODO Assign max_lod_hint when available
 
-	VoxelStream::VoxelQueryData voxel_query_data{ *_voxels, origin_in_voxels, _lod, VoxelStream::RESULT_ERROR };
+	VoxelStream::VoxelQueryData voxel_query_data{ *_voxels, origin_in_voxels, _lod_index, VoxelStream::RESULT_ERROR };
 	stream->load_voxel_block(voxel_query_data);
 
 	if (voxel_query_data.result == VoxelStream::RESULT_ERROR) {
@@ -68,14 +71,16 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext ctx) {
 			Ref<VoxelGenerator> generator = _stream_dependency->generator;
 
 			if (generator.is_valid()) {
-				GenerateBlockTask *task = memnew(GenerateBlockTask);
+				GenerateBlockTask *task = ZN_NEW(GenerateBlockTask);
 				task->voxels = _voxels;
 				task->volume_id = _volume_id;
 				task->position = _position;
-				task->lod = _lod;
+				task->lod_index = _lod_index;
 				task->block_size = _block_size;
 				task->stream_dependency = _stream_dependency;
 				task->priority_dependency = _priority_dependency;
+				task->use_gpu = _generator_use_gpu;
+				task->data = _voxel_data;
 
 				VoxelEngine::get_singleton().push_async_task(task);
 				_requested_generator_task = true;
@@ -95,7 +100,7 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext ctx) {
 		ERR_FAIL_COND(_instances != nullptr);
 
 		VoxelStream::InstancesQueryData instances_query;
-		instances_query.lod = _lod;
+		instances_query.lod = _lod_index;
 		instances_query.position = _position;
 		stream->load_instance_blocks(Span<VoxelStream::InstancesQueryData>(&instances_query, 1));
 
@@ -115,7 +120,7 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext ctx) {
 TaskPriority LoadBlockDataTask::get_priority() {
 	float closest_viewer_distance_sq;
 	const TaskPriority p =
-			_priority_dependency.evaluate(_lod, constants::TASK_PRIORITY_LOAD_BAND2, &closest_viewer_distance_sq);
+			_priority_dependency.evaluate(_lod_index, constants::TASK_PRIORITY_LOAD_BAND2, &closest_viewer_distance_sq);
 	_too_far = closest_viewer_distance_sq > _priority_dependency.drop_distance_squared;
 	return p;
 }
@@ -134,7 +139,7 @@ void LoadBlockDataTask::apply_result() {
 			o.voxels = _voxels;
 			o.instances = std::move(_instances);
 			o.position = _position;
-			o.lod = _lod;
+			o.lod_index = _lod_index;
 			o.dropped = !_has_run;
 			o.max_lod_hint = _max_lod_hint;
 			o.initial_load = false;

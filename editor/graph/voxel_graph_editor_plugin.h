@@ -23,6 +23,8 @@ public:
 	void edit_ios(Ref<pg::VoxelGraphFunction> graph);
 
 private:
+	void init();
+
 	bool _zn_handles(const Object *p_object) const override;
 	void _zn_edit(Object *p_object) override;
 	void _zn_make_visible(bool visible) override;
@@ -40,6 +42,7 @@ private:
 	void _on_graph_editor_regenerate_requested();
 	void _on_graph_editor_popout_requested();
 	void _on_graph_editor_window_close_requested();
+	void _on_generator_changed();
 	void _hide_deferred();
 
 	static void _bind_methods();

@@ -123,8 +123,11 @@ public:
 	void set_normalmap_use_gpu(bool enabled);
 	bool get_normalmap_use_gpu() const;
 
+	void set_generator_use_gpu(bool enabled);
+	bool get_generator_use_gpu() const;
+
 	// These must be called after an edit
-	void post_edit_area(Box3i p_box);
+	void post_edit_area(Box3i p_box, bool update_mesh);
 	void post_edit_modifiers(Box3i p_voxel_box);
 
 	// TODO This still sucks atm cuz the edit will still run on the main thread
@@ -185,6 +188,8 @@ public:
 	void restart_stream() override;
 	void remesh_all_blocks() override;
 
+	bool is_area_meshed(const Box3i &box_in_voxels, unsigned int lod_index) const;
+
 	// Debugging
 
 	Array debug_raycast_mesh_block(Vector3 world_origin, Vector3 world_direction) const;
@@ -200,8 +205,9 @@ public:
 		DEBUG_DRAW_EDIT_BOXES = 3,
 		DEBUG_DRAW_VOLUME_BOUNDS = 4,
 		DEBUG_DRAW_EDITED_BLOCKS = 5,
+		DEBUG_DRAW_MODIFIER_BOUNDS = 6,
 
-		DEBUG_DRAW_FLAGS_COUNT = 6
+		DEBUG_DRAW_FLAGS_COUNT = 7
 	};
 
 	void debug_set_draw_enabled(bool enabled);
@@ -296,6 +302,8 @@ private:
 	int _b_debug_get_data_block_count() const;
 	// TODO GDX: Can't bind functions returning a `godot::Error` enum
 	int /*Error*/ _b_debug_dump_as_scene(String fpath, bool include_instancer) const;
+
+	bool _b_is_area_meshed(AABB aabb, int lod_index) const;
 
 	Dictionary _b_get_statistics() const;
 

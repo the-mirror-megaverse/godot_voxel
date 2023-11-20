@@ -7,7 +7,23 @@
 namespace zylann {
 
 struct ThreadedTaskContext {
-	uint8_t thread_index;
+	enum Status {
+		// The task is complete and will be put in the list of completed tasks by the TaskRunner. It will be deleted
+		// later. This is the default status.
+		STATUS_COMPLETE = 0,
+		// The task is not complete and will be re-run later by the TaskRunner
+		STATUS_POSTPONED = 1,
+		// The task is not complete and will be re-scheduled by another custom task.
+		// The TaskRunner will simply drop its pointer and won't put it in the list of completed tasks.
+		// Initially added so we can schedule task B from task A, and have B re-schedule A to use results computed in A
+		STATUS_TAKEN_OUT = 2
+	};
+
+	// Index of the thread within the runner's pool. Can be used to index arrays as an alternative to thread_local
+	// storage.
+	const uint8_t thread_index;
+	// May be set by the task to signal its status after run
+	Status status;
 };
 
 // Interface for a task that will run in `ThreadedTaskRunner`.
@@ -17,7 +33,7 @@ public:
 	virtual ~IThreadedTask() {}
 
 	// Called from within the thread pool
-	virtual void run(ThreadedTaskContext ctx) = 0;
+	virtual void run(ThreadedTaskContext &ctx) = 0;
 
 	// Convenience method which can be called by the scheduler of the task (usually on the main thread)
 	// in order to apply results. It is not called from the thread pool.

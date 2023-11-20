@@ -1,4 +1,5 @@
 #include "load_all_blocks_data_task.h"
+#include "../storage/voxel_data.h"
 #include "../util/log.h"
 #include "../util/profiling.h"
 #include "../util/string_funcs.h"
@@ -6,7 +7,7 @@
 
 namespace zylann::voxel {
 
-void LoadAllBlocksDataTask::run(zylann::ThreadedTaskContext ctx) {
+void LoadAllBlocksDataTask::run(zylann::ThreadedTaskContext &ctx) {
 	ZN_PROFILE_SCOPE();
 
 	CRASH_COND(stream_dependency == nullptr);
@@ -42,13 +43,15 @@ void LoadAllBlocksDataTask::apply_result() {
 				o.voxels = rb.voxels;
 				o.instances = std::move(rb.instances_data);
 				o.position = rb.position;
-				o.lod = rb.lod;
+				o.lod_index = rb.lod;
 				o.dropped = false;
 				o.max_lod_hint = false;
 				o.initial_load = true;
 
 				callbacks.data_output_callback(callbacks.data, o);
 			}
+
+			data->set_full_load_completed(true);
 		}
 
 	} else {

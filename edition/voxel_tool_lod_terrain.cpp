@@ -230,12 +230,9 @@ public:
 		return "VoxelToolAsyncEdit";
 	}
 
-	void run(ThreadedTaskContext ctx) override {
+	void run(ThreadedTaskContext &ctx) override {
 		ZN_PROFILE_SCOPE();
 		ZN_ASSERT(_data != nullptr);
-		// TODO Thread-safety: not sure if this is entirely safe, VoxelDataBlock members aren't protected.
-		// Only the map and VoxelBuffers are. To fix this we could migrate to a spatial lock.
-
 		// TODO May want to fail if not all blocks were found
 		// TODO Need to apply modifiers
 		_data->get_blocks_grid(_op.blocks, _op.box, 0);
@@ -341,19 +338,19 @@ float VoxelToolLodTerrain::_get_voxel_f(Vector3i pos) const {
 void VoxelToolLodTerrain::_set_voxel(Vector3i pos, uint64_t v) {
 	ERR_FAIL_COND(_terrain == nullptr);
 	_terrain->get_storage().try_set_voxel(v, pos, _channel);
-	// No post_update, the parent class does it, it's a generic slow implemntation
+	// No post_update, the parent class does it, it's a generic slow implementation.
 }
 
 void VoxelToolLodTerrain::_set_voxel_f(Vector3i pos, float v) {
 	ERR_FAIL_COND(_terrain == nullptr);
 	// TODO Format should be accessible from terrain
 	_terrain->get_storage().try_set_voxel_f(v, pos, _channel);
-	// No post_update, the parent class does it, it's a generic slow implemntation
+	// No post_update, the parent class does it, it's a generic slow implementation.
 }
 
 void VoxelToolLodTerrain::_post_edit(const Box3i &box) {
 	ERR_FAIL_COND(_terrain == nullptr);
-	_terrain->post_edit_area(box);
+	_terrain->post_edit_area(box, true);
 }
 
 int VoxelToolLodTerrain::get_raycast_binary_search_iterations() const {
@@ -663,7 +660,7 @@ Array separate_floating_chunks(VoxelTool &voxel_tool, Box3i world_box, Node *par
 
 			// TODO If normalmapping is used here with the Transvoxel mesher, we need to either turn it off just for
 			// this call, or to pass the right options
-			Ref<Mesh> mesh = mesher->build_mesh(info.voxels, materials, Dictionary());
+			Ref<ArrayMesh> mesh = mesher->build_mesh(info.voxels, materials, Dictionary());
 			// The mesh is not supposed to be null,
 			// because we build these buffers from connected groups that had negative SDF.
 			ERR_CONTINUE(mesh.is_null());
@@ -702,7 +699,7 @@ Array separate_floating_chunks(VoxelTool &voxel_tool, Box3i world_box, Node *par
 			collision_shape->set_position(offset);
 
 			RigidBody3D *rigid_body = memnew(RigidBody3D);
-			rigid_body->set_transform(transform * transform3d_translated_local(local_transform, -offset));
+			rigid_body->set_transform(transform * local_transform.translated_local(-offset));
 			rigid_body->add_child(collision_shape);
 			rigid_body->set_freeze_mode(RigidBody3D::FREEZE_MODE_KINEMATIC);
 			rigid_body->set_freeze_enabled(true);
@@ -760,8 +757,8 @@ Array VoxelToolLodTerrain::separate_floating_chunks(AABB world_box, Object *pare
 // `isolevel` alters the shape of the SDF: positive "puffs" it, negative "erodes" it. This is a applied after
 // `sdf_scale`.
 //
-// `sdf_scale` scales SDF values (it doesnt make the shape bigger or smaller). Usually defaults to 1 but may be lower if
-// artifacts show up due to scaling used in terrain SDF.
+// `sdf_scale` scales SDF values (it doesn't make the shape bigger or smaller). Usually defaults to 1 but may be lower
+// if artifacts show up due to scaling used in terrain SDF.
 //
 void VoxelToolLodTerrain::stamp_sdf(
 		Ref<VoxelMeshSDF> mesh_sdf, Transform3D transform, float isolevel, float sdf_scale) {
@@ -797,7 +794,7 @@ void VoxelToolLodTerrain::stamp_sdf(
 
 	data.pre_generate_box(voxel_box);
 
-	// TODO Maybe more efficient to "rasterize" the box? We're going to iterate voxels the box doesnt intersect
+	// TODO Maybe more efficient to "rasterize" the box? We're going to iterate voxels the box doesn't intersect.
 	// TODO Maybe we should scale SDF values based on the scale of the transform too
 
 	const Transform3D buffer_to_box =

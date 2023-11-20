@@ -19,7 +19,15 @@
 #include "generators/simple/voxel_generator_noise_2d.h"
 #include "generators/simple/voxel_generator_waves.h"
 #include "generators/voxel_generator_script.h"
+#include "meshers/blocky/types/voxel_blocky_attribute_axis.h"
+#include "meshers/blocky/types/voxel_blocky_attribute_custom.h"
+#include "meshers/blocky/types/voxel_blocky_attribute_direction.h"
+#include "meshers/blocky/types/voxel_blocky_attribute_rotation.h"
+#include "meshers/blocky/types/voxel_blocky_type_library.h"
 #include "meshers/blocky/voxel_blocky_library.h"
+#include "meshers/blocky/voxel_blocky_model_cube.h"
+#include "meshers/blocky/voxel_blocky_model_empty.h"
+#include "meshers/blocky/voxel_blocky_model_mesh.h"
 #include "meshers/blocky/voxel_mesher_blocky.h"
 #include "meshers/cubes/voxel_mesher_cubes.h"
 #include "meshers/dmc/voxel_mesher_dmc.h"
@@ -53,6 +61,7 @@
 #include "util/tasks/godot/threaded_task_gd.h"
 
 #ifdef ZN_GODOT_EXTENSION
+#include "engine/voxel_engine_updater.h"
 #include "util/thread/godot_thread_helper.h"
 #endif
 
@@ -71,10 +80,9 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef TOOLS_ENABLED
 
-#ifdef ZN_GODOT
-#include "editor/editor_plugin.h"
-#endif
+#include "editor/blocky_library/voxel_blocky_library_editor_plugin.h"
 #include "editor/fast_noise_lite/fast_noise_lite_editor_plugin.h"
+#include "editor/graph/graph_nodes_doc_tool.h"
 #include "editor/graph/voxel_graph_editor_node_preview.h"
 #include "editor/graph/voxel_graph_editor_plugin.h"
 #include "editor/instance_library/voxel_instance_library_editor_plugin.h"
@@ -84,6 +92,7 @@
 #include "editor/terrain/voxel_terrain_editor_plugin.h"
 #include "editor/vox/vox_editor_plugin.h"
 #include "editor/voxel_debug.h"
+#include "util/godot/classes/os.h"
 
 #ifdef VOXEL_ENABLE_FAST_NOISE_2
 #include "editor/fast_noise_2/fast_noise_2_editor_plugin.h"
@@ -91,6 +100,16 @@
 
 #ifdef ZN_GODOT_EXTENSION
 #include "editor/about_window.h"
+#include "editor/blocky_library/axes_3d_control.h"
+#include "editor/blocky_library/model_viewer.h"
+#include "editor/blocky_library/types/voxel_blocky_type_attribute_combination_selector.h"
+#include "editor/blocky_library/types/voxel_blocky_type_editor_inspector_plugin.h"
+#include "editor/blocky_library/types/voxel_blocky_type_library_editor_inspector_plugin.h"
+#include "editor/blocky_library/types/voxel_blocky_type_library_ids_dialog.h"
+#include "editor/blocky_library/types/voxel_blocky_type_variant_list_editor.h"
+#include "editor/blocky_library/types/voxel_blocky_type_viewer.h"
+#include "editor/blocky_library/voxel_blocky_model_editor_inspector_plugin.h"
+#include "editor/blocky_library/voxel_blocky_model_viewer.h"
 #include "editor/fast_noise_lite/fast_noise_lite_editor_inspector_plugin.h"
 #include "editor/fast_noise_lite/fast_noise_lite_viewer.h"
 #include "editor/graph/editor_property_text_change_on_submit.h"
@@ -102,12 +121,14 @@
 #include "editor/graph/voxel_graph_editor_shader_dialog.h"
 #include "editor/graph/voxel_graph_editor_window.h"
 #include "editor/graph/voxel_graph_function_inspector_plugin.h"
+#include "editor/graph/voxel_graph_node_dialog.h"
 #include "editor/graph/voxel_graph_node_inspector_wrapper.h"
 #include "editor/graph/voxel_range_analysis_dialog.h"
 #include "editor/instance_library/voxel_instance_library_inspector_plugin.h"
 #include "editor/instance_library/voxel_instance_library_multimesh_item_inspector_plugin.h"
 #include "editor/instancer/voxel_instancer_stat_view.h"
 #include "editor/mesh_sdf/voxel_mesh_sdf_viewer.h"
+#include "editor/terrain/editor_property_aabb_min_max.h"
 #include "editor/terrain/voxel_terrain_editor_task_indicator.h"
 #endif
 
@@ -167,44 +188,30 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 	using namespace voxel;
 
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
-		VoxelMemoryPool::create_singleton();
-		VoxelStringNames::create_singleton();
-		pg::NodeTypeDB::create_singleton();
-
-		unsigned int main_thread_budget_usec;
-		const VoxelEngine::ThreadsConfig threads_config =
-				gd::VoxelEngine::get_config_from_godot(main_thread_budget_usec);
-		VoxelEngine::create_singleton(threads_config);
-		VoxelEngine::get_singleton().set_main_thread_time_budget_usec(main_thread_budget_usec);
-#if defined(ZN_GODOT)
-		// TODO Enhancement: threaded graphics resource building should be initialized better.
-		// Pick this from the current renderer + user option (at time of writing, Godot 4 has only one
-		// renderer and has not figured out how such option would be exposed). Could use `can_create_resources_async`
-		// but this is internal. AFAIK `is_low_end` will be `true` only for OpenGL backends, which are the only ones not
-		// supporting async resource creation.
-		VoxelEngine::get_singleton().set_threaded_graphics_resource_building_enabled(
-				RenderingServer::get_singleton()->is_low_end() == false);
-#else
-		// TODO GDX: RenderingServer::is_low_end() is not exposed, can't tell if we can generate graphics resources in
-		// different threads
-#endif
-
-		gd::VoxelEngine::create_singleton();
-		add_godot_singleton("VoxelEngine", gd::VoxelEngine::get_singleton());
-
-		VoxelMetadataFactory::get_singleton().add_constructor_by_type<gd::VoxelMetadataVariant>(
-				gd::METADATA_TYPE_VARIANT);
-
-		VoxelMesherTransvoxel::load_static_resources();
-
 		// TODO Enhancement: can I prevent users from instancing `VoxelEngine`?
 		// This class is used as a singleton so it's not really abstract.
 		// Should I use `register_abstract_class` anyways?
 		ClassDB::register_class<gd::VoxelEngine>();
 
 		// Misc
+
+		// Should be abstract, but isn't for compatibility with old versions that didn't have separate VoxelBlockyModel
+		// classes
 		ClassDB::register_class<VoxelBlockyModel>();
+
+		ClassDB::register_class<VoxelBlockyModelCube>();
+		ClassDB::register_class<VoxelBlockyModelMesh>();
+		ClassDB::register_class<VoxelBlockyModelEmpty>();
+		register_abstract_class<VoxelBlockyLibraryBase>();
 		ClassDB::register_class<VoxelBlockyLibrary>();
+		register_abstract_class<VoxelBlockyAttribute>();
+		ClassDB::register_class<VoxelBlockyAttributeAxis>();
+		ClassDB::register_class<VoxelBlockyAttributeDirection>();
+		ClassDB::register_class<VoxelBlockyAttributeRotation>();
+		ClassDB::register_class<VoxelBlockyAttributeCustom>();
+		ClassDB::register_class<VoxelBlockyType>();
+		ClassDB::register_class<VoxelBlockyTypeLibrary>();
+
 		ClassDB::register_class<VoxelColorPalette>();
 		ClassDB::register_class<VoxelInstanceLibrary>();
 		register_abstract_class<VoxelInstanceLibraryItem>();
@@ -238,8 +245,8 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		// Generators
 		register_abstract_class<VoxelGenerator>();
 		ClassDB::register_class<VoxelGeneratorFlat>();
-		ClassDB::register_class<VoxelGeneratorWaves>();
 		register_abstract_class<VoxelGeneratorHeightmap>();
+		ClassDB::register_class<VoxelGeneratorWaves>();
 		ClassDB::register_class<VoxelGeneratorImage>();
 		ClassDB::register_class<VoxelGeneratorNoise2D>();
 		ClassDB::register_class<VoxelGeneratorNoise>();
@@ -275,8 +282,9 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<VoxelMesherCubes>();
 
 #ifdef ZN_GODOT_EXTENSION
-		// TODO GDX: I don't want to expose this one but there is no way not to expose it
+		// TODO GDX: I don't want to expose these classes, but there is no way not to expose them
 		ClassDB::register_class<ZN_GodotThreadHelper>();
+		ClassDB::register_class<VoxelEngineUpdater>();
 #endif
 
 		print_size_reminders();
@@ -292,13 +300,45 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 
 #ifdef ZN_GODOT
 		// Compatibility with older version
-		ClassDB::add_compatibility_class("VoxelLibrary", "VoxelBlockyLibrary");
-		ClassDB::add_compatibility_class("Voxel", "VoxelBlockyModel");
+		// ClassDB::add_compatibility_class("VoxelLibrary", "VoxelBlockyLibrary");
+		// ClassDB::add_compatibility_class("Voxel", "VoxelBlockyModel");
 		ClassDB::add_compatibility_class("VoxelInstanceLibraryItem", "VoxelInstanceLibraryMultiMeshItem");
 		// Not possible to add a compat class for this one because the new name is indistinguishable from an old one.
 		// However this is an abstract class so it should not be found in resources hopefully
 		// ClassDB::add_compatibility_class("VoxelInstanceLibraryItemBase", "VoxelInstanceLibraryItem");
 #endif
+		// Setup engine after classes are registered.
+		// This is necessary when using GDExtension because classes can't be instantiated until they are registered.
+
+		VoxelMemoryPool::create_singleton();
+		VoxelStringNames::create_singleton();
+		pg::NodeTypeDB::create_singleton();
+
+		unsigned int main_thread_budget_usec;
+		const VoxelEngine::ThreadsConfig threads_config =
+				gd::VoxelEngine::get_config_from_godot(main_thread_budget_usec);
+		VoxelEngine::create_singleton(threads_config);
+		VoxelEngine::get_singleton().set_main_thread_time_budget_usec(main_thread_budget_usec);
+#if defined(ZN_GODOT)
+		// TODO Enhancement: threaded graphics resource building should be initialized better.
+		// Pick this from the current renderer + user option (at time of writing, Godot 4 has only one
+		// renderer and has not figured out how such option would be exposed). Could use `can_create_resources_async`
+		// but this is internal. AFAIK `is_low_end` will be `true` only for OpenGL backends, which are the only ones not
+		// supporting async resource creation.
+		VoxelEngine::get_singleton().set_threaded_graphics_resource_building_enabled(
+				RenderingServer::get_singleton()->is_low_end() == false);
+#else
+		// TODO GDX: RenderingServer::is_low_end() is not exposed, can't tell if we can generate graphics resources in
+		// different threads
+#endif
+
+		gd::VoxelEngine::create_singleton();
+		add_godot_singleton("VoxelEngine", gd::VoxelEngine::get_singleton());
+
+		VoxelMetadataFactory::get_singleton().add_constructor_by_type<gd::VoxelMetadataVariant>(
+				gd::METADATA_TYPE_VARIANT);
+
+		VoxelMesherTransvoxel::load_static_resources();
 
 #ifdef VOXEL_RUN_TESTS
 		zylann::voxel::tests::run_voxel_tests();
@@ -309,40 +349,37 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		VoxelGraphEditorNodePreview::load_resources();
 
-#if defined(ZN_GODOT)
-		EditorPlugins::add_by_type<VoxelGraphEditorPlugin>();
-		EditorPlugins::add_by_type<VoxelTerrainEditorPlugin>();
-		EditorPlugins::add_by_type<VoxelInstanceLibraryEditorPlugin>();
-		EditorPlugins::add_by_type<VoxelInstanceLibraryMultiMeshItemEditorPlugin>();
-		EditorPlugins::add_by_type<ZN_FastNoiseLiteEditorPlugin>();
-		EditorPlugins::add_by_type<magica::VoxelVoxEditorPlugin>();
-		EditorPlugins::add_by_type<VoxelInstancerEditorPlugin>();
-		EditorPlugins::add_by_type<VoxelMeshSDFEditorPlugin>();
-#ifdef VOXEL_ENABLE_FAST_NOISE_2
-		EditorPlugins::add_by_type<FastNoise2EditorPlugin>();
-#endif
-
-#elif defined(ZN_GODOT_EXTENSION)
-		// TODO GDX: Can't add plugins.
-		// See https://github.com/godotengine/godot-cpp/issues/640
-		// and https://github.com/godotengine/godot/pull/65592
-
+#if defined(ZN_GODOT_EXTENSION)
 		// TODO GDX: I don't want to expose any of the following classes, but it looks like there is no way to make them
 		// functional as extensions BUT not expose them
+
+		ClassDB::register_class<ZN_EditorPlugin>();
+		ClassDB::register_class<ZN_EditorImportPlugin>();
+		ClassDB::register_class<ZN_EditorInspectorPlugin>();
+		ClassDB::register_class<ZN_EditorProperty>();
+		ClassDB::register_class<ZN_Axes3DControl>();
+		ClassDB::register_class<ZN_ModelViewer>();
+		ClassDB::register_class<EditorPropertyAABBMinMax>();
+
+		ClassDB::register_class<ZN_FastNoiseLiteEditorPlugin>();
+		ClassDB::register_class<ZN_FastNoiseLiteEditorInspectorPlugin>();
+		ClassDB::register_class<ZN_FastNoiseLiteViewer>();
 
 		ClassDB::register_class<VoxelAboutWindow>();
 		ClassDB::register_class<VoxelTerrainEditorInspectorPlugin>();
 		ClassDB::register_class<VoxelTerrainEditorPlugin>();
 		ClassDB::register_class<VoxelTerrainEditorTaskIndicator>();
 
-		ClassDB::register_class<ZN_FastNoiseLiteEditorPlugin>();
-		ClassDB::register_class<ZN_FastNoiseLiteEditorInspectorPlugin>();
-		ClassDB::register_class<ZN_FastNoiseLiteViewer>();
+		ClassDB::register_class<VoxelBlockyModelViewer>();
+		ClassDB::register_class<VoxelBlockyLibraryEditorPlugin>();
+		ClassDB::register_class<VoxelBlockyModelEditorInspectorPlugin>();
 
-		ClassDB::register_class<ZN_EditorPlugin>();
-		ClassDB::register_class<ZN_EditorImportPlugin>();
-		ClassDB::register_class<ZN_EditorInspectorPlugin>();
-		ClassDB::register_class<ZN_EditorProperty>();
+		ClassDB::register_class<VoxelBlockyTypeViewer>();
+		ClassDB::register_class<VoxelBlockyTypeEditorInspectorPlugin>();
+		ClassDB::register_class<VoxelBlockyTypeLibraryIDSDialog>();
+		ClassDB::register_class<VoxelBlockyTypeLibraryEditorInspectorPlugin>();
+		ClassDB::register_class<VoxelBlockyTypeAttributeCombinationSelector>();
+		ClassDB::register_class<VoxelBlockyTypeVariantListEditor>();
 
 		ClassDB::register_class<magica::VoxelVoxEditorPlugin>();
 		ClassDB::register_class<magica::VoxelVoxMeshImporter>();
@@ -370,7 +407,43 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<VoxelGraphEditorShaderDialog>();
 		ClassDB::register_class<VoxelGraphEditorIODialog>();
 		ClassDB::register_class<VoxelGraphNodeInspectorWrapper>();
+		ClassDB::register_class<VoxelGraphNodeDialog>();
 		ClassDB::register_class<VoxelRangeAnalysisDialog>();
+#endif
+
+		EditorPlugins::add_by_type<VoxelGraphEditorPlugin>();
+		EditorPlugins::add_by_type<VoxelTerrainEditorPlugin>();
+		EditorPlugins::add_by_type<VoxelInstanceLibraryEditorPlugin>();
+		EditorPlugins::add_by_type<VoxelInstanceLibraryMultiMeshItemEditorPlugin>();
+		EditorPlugins::add_by_type<ZN_FastNoiseLiteEditorPlugin>();
+		EditorPlugins::add_by_type<magica::VoxelVoxEditorPlugin>();
+		EditorPlugins::add_by_type<VoxelInstancerEditorPlugin>();
+		EditorPlugins::add_by_type<VoxelMeshSDFEditorPlugin>();
+		EditorPlugins::add_by_type<VoxelBlockyLibraryEditorPlugin>();
+#ifdef VOXEL_ENABLE_FAST_NOISE_2
+		EditorPlugins::add_by_type<FastNoise2EditorPlugin>();
+#endif
+
+#ifdef TOOLS_ENABLED
+		// TODO Any way to define a custom command line argument that closes Godot afterward?
+
+		const PackedStringArray command_line_arguments = get_command_line_arguments();
+		const String doc_tool_cmd = "--voxel_doc_tool";
+
+		for (int i = 0; i < command_line_arguments.size(); ++i) {
+			const String arg = command_line_arguments[i];
+			if (arg == doc_tool_cmd) {
+				if (i + 2 >= command_line_arguments.size()) {
+					ERR_PRINT(String("Expected source and destination file paths after {0}").format(varray(arg)));
+					break;
+				}
+				const String src_path = command_line_arguments[i + 1];
+				const String dst_path = command_line_arguments[i + 2];
+				run_graph_nodes_doc_tool(src_path, dst_path);
+				break;
+			}
+		}
+// run_graph_nodes_doc_tool
 #endif
 	}
 #endif // TOOLS_ENABLED
@@ -385,8 +458,8 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 
 		// At this point, the GDScript module has nullified GDScriptLanguage::singleton!!
 		// That means it's impossible to free scripts still referenced by VoxelEngine. And that can happen, because
-		// users can write custom generators, which run inside threads, and these threads are hosted in the server...
-		// See https://github.com/Zylann/godot_voxel/issues/189
+		// users can write custom generators, which run inside threads, and these threads are hosted in the engine
+		// singleton... See https://github.com/Zylann/godot_voxel/issues/189
 
 		VoxelMesherTransvoxel::free_static_resources();
 		VoxelStringNames::destroy_singleton();
@@ -403,7 +476,7 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 		zylann::free_debug_resources();
 		VoxelGraphEditorNodePreview::unload_resources();
 
-		// TODO GDX: Can't remove plugins.
+		// Plugins are automatically unregistered since https://github.com/godotengine/godot-cpp/pull/1138
 	}
 #endif // TOOLS_ENABLED
 }
@@ -411,9 +484,9 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 #ifdef ZN_GODOT_EXTENSION
 extern "C" {
 // Library entry point
-GDExtensionBool GDE_EXPORT voxel_library_init(const GDExtensionInterface *p_interface,
-		const GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
-	godot::GDExtensionBinding::InitObject init_obj(p_interface, p_library, r_initialization);
+GDExtensionBool GDE_EXPORT voxel_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address,
+		GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
+	godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
 
 	init_obj.register_initializer(initialize_voxel_module);
 	init_obj.register_terminator(uninitialize_voxel_module);

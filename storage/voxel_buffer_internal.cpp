@@ -118,7 +118,7 @@ namespace {
 uint64_t g_default_values[VoxelBufferInternal::MAX_CHANNELS] = {
 	0, // TYPE
 
-	// Casted explicitely to avoid warning about narrowing conversion, the intent is to store all bits of the value
+	// Casted explicitly to avoid warning about narrowing conversion, the intent is to store all bits of the value
 	// as-is in a type that can store them all. The interpretation of the type is meaningless (depends on its use). It
 	// should be possible to cast it back to the actual type with no loss of data, as long as all bits are preserved.
 	uint16_t(snorm_to_s16(1.f)), // SDF
@@ -656,6 +656,7 @@ bool VoxelBufferInternal::get_channel_raw(unsigned int channel_index, Span<uint8
 		slice = Span<uint8_t>(channel.data, 0, channel.size_in_bytes);
 		return true;
 	}
+	// TODO Could we just return `Span<uint8_t>(&channel.defval, 1)` ?
 	slice = Span<uint8_t>();
 	return false;
 }
@@ -1072,6 +1073,59 @@ void scale_and_store_sdf(VoxelBufferInternal &voxels, Span<float> sdf) {
 				raw[i] = snorm_to_s16(sdf[i]);
 			}
 		} break;
+
+		case VoxelBufferInternal::DEPTH_32_BIT: {
+			Span<float> raw;
+			ZN_ASSERT(voxels.get_channel_data(channel, raw));
+			memcpy(raw.data(), sdf.data(), sizeof(float) * sdf.size());
+		} break;
+
+		case VoxelBufferInternal::DEPTH_64_BIT: {
+			Span<double> raw;
+			ZN_ASSERT(voxels.get_channel_data(channel, raw));
+			for (unsigned int i = 0; i < sdf.size(); ++i) {
+				raw[i] = sdf[i];
+			}
+		} break;
+
+		default:
+			ZN_CRASH();
+	}
+}
+
+void scale_and_store_sdf_if_modified(VoxelBufferInternal &voxels, Span<float> sdf, Span<const float> comparand) {
+	ZN_PROFILE_SCOPE();
+	const VoxelBufferInternal::ChannelId channel = VoxelBufferInternal::CHANNEL_SDF;
+	const VoxelBufferInternal::Depth depth = voxels.get_channel_depth(channel);
+	ZN_ASSERT_RETURN(voxels.get_channel_compression(channel) == VoxelBufferInternal::COMPRESSION_NONE);
+
+	const float scale = VoxelBufferInternal::get_sdf_quantization_scale(depth);
+	// for (unsigned int i = 0; i < sdf.size(); ++i) {
+	// 	sdf[i] *= scale;
+	// }
+
+	switch (depth) {
+		case VoxelBufferInternal::DEPTH_8_BIT: {
+			Span<int8_t> raw;
+			ZN_ASSERT(voxels.get_channel_data(channel, raw));
+			for (unsigned int i = 0; i < sdf.size(); ++i) {
+				if (comparand[i] != sdf[i]) {
+					raw[i] = snorm_to_s8(sdf[i] * scale);
+				}
+			}
+		} break;
+
+		case VoxelBufferInternal::DEPTH_16_BIT: {
+			Span<int16_t> raw;
+			ZN_ASSERT(voxels.get_channel_data(channel, raw));
+			for (unsigned int i = 0; i < sdf.size(); ++i) {
+				if (comparand[i] != sdf[i]) {
+					raw[i] = snorm_to_s16(sdf[i] * scale);
+				}
+			}
+		} break;
+
+			// Float formats don't need this, so they are still fully written.
 
 		case VoxelBufferInternal::DEPTH_32_BIT: {
 			Span<float> raw;

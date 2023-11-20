@@ -1,5 +1,5 @@
 #include "vox_data.h"
-#include "../../util/godot/classes/file.h"
+#include "../../util/godot/classes/file_access.h"
 #include "../../util/godot/core/array.h"
 #include "../../util/log.h"
 #include "../../util/profiling.h"
@@ -479,7 +479,7 @@ Error Data::_load_from_file(String fpath) {
 	}
 
 	// There is no indication on the official spec to detect the root node of the scene graph.
-	// It might just be the first one we find in the file, but the specification does not explicitely enforce that.
+	// It might just be the first one we find in the file, but the specification does not explicitly enforce that.
 	// So we have to do it the long way, marking which nodes are referenced by others.
 	std::unordered_set<int> referenced_nodes;
 

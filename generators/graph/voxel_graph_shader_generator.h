@@ -1,7 +1,7 @@
 #ifndef VOXEL_GRAPH_SHADER_GENERATOR_H
 #define VOXEL_GRAPH_SHADER_GENERATOR_H
 
-#include "../../engine/compute_shader_resource.h"
+#include "../../engine/gpu/compute_shader_resource.h"
 #include "../../util/errors.h"
 #include "../../util/godot/core/variant.h"
 #include "../../util/span.h"
@@ -16,9 +16,15 @@ struct ShaderParameter {
 	ComputeShaderResource resource;
 };
 
+struct ShaderOutput {
+	enum Type { TYPE_SDF, TYPE_SINGLE_TEXTURE, TYPE_TYPE };
+	Type type;
+};
+
 // Generates GLSL code from the given graph.
 CompilationResult generate_shader(const ProgramGraph &p_graph, Span<const VoxelGraphFunction::Port> input_defs,
-		FwdMutableStdString output, std::vector<ShaderParameter> &uniforms);
+		FwdMutableStdString source_code, std::vector<ShaderParameter> &uniforms, std::vector<ShaderOutput> &outputs,
+		Span<const VoxelGraphFunction::NodeTypeID> restricted_outputs);
 
 // Sent as argument to functions implementing generator nodes, in order to generate shader code.
 class ShaderGenContext {

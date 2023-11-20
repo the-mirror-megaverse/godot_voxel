@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="VoxelTerrain" inherits="VoxelNode" version="4.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="VoxelTerrain" inherits="VoxelNode" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
 		Voxel volume using constant level of detail.
 	</brief_description>
@@ -139,19 +139,32 @@
 			Makes the terrain appear in the editor.
 			Important: this option will turn off automatically if you setup a script world generator. Modifying scripts while they are in use by threads causes undefined behaviors. You can still turn on this option if you need a preview, but it is strongly advised to turn it back off and wait until all generation has finished before you edit the script again.
 		</member>
+		<member name="use_gpu_generation" type="bool" setter="set_generator_use_gpu" getter="get_generator_use_gpu" default="false">
+			Enables GPU block generation, which can speed it up. This is only valid for generators that support it. Vulkan is required.
+		</member>
 	</members>
 	<signals>
 		<signal name="block_loaded">
-			<param index="0" name="position" type="Vector3" />
+			<param index="0" name="position" type="Vector3i" />
 			<description>
 				Emitted when a new data block is loaded from stream.
 				Note: it might be not visible yet.
 			</description>
 		</signal>
 		<signal name="block_unloaded">
-			<param index="0" name="position" type="Vector3" />
+			<param index="0" name="position" type="Vector3i" />
 			<description>
 				Emitted when a data block is unloaded due to being outside view distance.
+			</description>
+		</signal>
+		<signal name="mesh_block_entered">
+			<param index="0" name="position" type="Vector3i" />
+			<description>
+			</description>
+		</signal>
+		<signal name="mesh_block_exited">
+			<param index="0" name="position" type="Vector3i" />
+			<description>
 			</description>
 		</signal>
 	</signals>

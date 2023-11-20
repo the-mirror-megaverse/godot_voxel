@@ -46,10 +46,10 @@ void VoxelTerrainMultiplayerSynchronizer::send_block(
 	BlockSerializer::SerializeResult result = BlockSerializer::serialize_and_compress(data_block.get_voxels_const());
 	ZN_ASSERT_RETURN(result.success);
 
-	PackedByteArray data;
-	data.resize(4 * sizeof(int16_t) + result.data.size());
+	PackedByteArray message_data;
+	message_data.resize(4 * sizeof(int16_t) + result.data.size());
 
-	ByteSpanWithPosition mw_span(Span<uint8_t>(data.ptrw(), data.size()), 0);
+	ByteSpanWithPosition mw_span(Span<uint8_t>(message_data.ptrw(), message_data.size()), 0);
 	MemoryWriterExistingBuffer mw(mw_span, ENDIANESS_LITTLE_ENDIAN);
 
 	mw.store_16(bpos.x);
@@ -64,7 +64,7 @@ void VoxelTerrainMultiplayerSynchronizer::send_block(
 	// rpc_id(viewer_peer_id, VoxelStringNames::get_singleton().receive_block, data);
 	// Instead of sending it right away, defer it until the terrain finished processing. Sending individual blocks with
 	// the RPC system is too slow.
-	_deferred_block_messages_per_peer[viewer_peer_id].push_back(DeferredBlockMessage{ data });
+	_deferred_block_messages_per_peer[viewer_peer_id].push_back(DeferredBlockMessage{ message_data });
 }
 
 // TODO Have a way to implement ghost edits?
@@ -99,7 +99,6 @@ void VoxelTerrainMultiplayerSynchronizer::send_area(Box3i voxel_box) {
 	mw.store_32(voxel_box.pos.z);
 	mw.store_32(result.data.size());
 	mw.store_buffer(to_span(result.data));
-
 	for (const ViewerID viewer_id : viewers) {
 		const int peer_id = VoxelEngine::get_singleton().get_viewer_network_peer_id(viewer_id);
 		// TODO Don't bother copying and serializing if no networked viewers are around?
@@ -175,14 +174,14 @@ void VoxelTerrainMultiplayerSynchronizer::process() {
 	}
 }
 
-void VoxelTerrainMultiplayerSynchronizer::_b_receive_blocks(PackedByteArray data) {
+void VoxelTerrainMultiplayerSynchronizer::_b_receive_blocks(PackedByteArray message_data) {
 	ZN_PROFILE_SCOPE();
 	ZN_ASSERT_RETURN(_terrain != nullptr);
 
 	// print_line(String("Client: receive blocks data {1}").format(varray(data.size())));
 	//  print_data_hex(Span<const uint8_t>(data.ptr(), data.size()));
 
-	MemoryReader mr(Span<const uint8_t>(data.ptr(), data.size()), ENDIANESS_LITTLE_ENDIAN);
+	MemoryReader mr(Span<const uint8_t>(message_data.ptr(), message_data.size()), ENDIANESS_LITTLE_ENDIAN);
 
 	const unsigned int block_count = mr.get_32();
 
@@ -209,11 +208,11 @@ void VoxelTerrainMultiplayerSynchronizer::_b_receive_blocks(PackedByteArray data
 	}
 }
 
-void VoxelTerrainMultiplayerSynchronizer::_b_receive_area(PackedByteArray data) {
+void VoxelTerrainMultiplayerSynchronizer::_b_receive_area(PackedByteArray message_data) {
 	ZN_PROFILE_SCOPE();
 	ZN_ASSERT_RETURN(_terrain != nullptr);
 
-	MemoryReader mr(Span<const uint8_t>(data.ptr(), data.size()), ENDIANESS_LITTLE_ENDIAN);
+	MemoryReader mr(Span<const uint8_t>(message_data.ptr(), message_data.size()), ENDIANESS_LITTLE_ENDIAN);
 
 	Vector3i pos;
 	pos.x = int32_t(mr.get_32());
@@ -225,7 +224,10 @@ void VoxelTerrainMultiplayerSynchronizer::_b_receive_area(PackedByteArray data) 
 	ZN_ASSERT_RETURN(BlockSerializer::decompress_and_deserialize(mr.data.sub(mr.pos, voxel_data_size), voxels));
 
 	_terrain->get_storage().paste(pos, voxels, 0xff, false);
-	_terrain->post_edit_area(Box3i(pos, voxels.get_size()));
+	_terrain->post_edit_area(Box3i(pos, voxels.get_size()),
+			// Don't bother for now, update mesh regardless. If necessary we would have to add a flag with the message
+			// to tell it's not actually changing voxels (if it's metadata changes), but might not be worth it
+			true);
 }
 
 #ifdef TOOLS_ENABLED
@@ -242,10 +244,10 @@ PackedStringArray VoxelTerrainMultiplayerSynchronizer::_get_configuration_warnin
 			warnings.append(ZN_TTR("This node must be child of {0}").format(varray(VoxelTerrain::get_class_static())));
 		}
 
-		const Node *parent = get_parent();
+		const Node *parent_node = get_parent();
 
-		if (parent != nullptr) {
-			const VoxelTerrain *terrain = Object::cast_to<VoxelTerrain>(parent);
+		if (parent_node != nullptr) {
+			const VoxelTerrain *terrain = Object::cast_to<VoxelTerrain>(parent_node);
 			if (terrain != nullptr && terrain->get_multiplayer_synchronizer() != this) {
 				warnings.append(ZN_TTR("Only one instance of {0} should exist under a {1}")
 										.format(varray(VoxelTerrainMultiplayerSynchronizer::get_class_static(),

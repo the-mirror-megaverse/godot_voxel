@@ -14,7 +14,28 @@ using namespace godot;
 
 #include <vector>
 
+#ifdef ZN_GODOT_EXTENSION
+// TODO GDX: `MAKE_RESOURCE_TYPE_HINT` is not available in GodotCpp
+// Helper macro to use with PROPERTY_HINT_ARRAY_TYPE for arrays of specific resources:
+// PropertyInfo(Variant::ARRAY, "fallbacks", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Font")
+#define MAKE_RESOURCE_TYPE_HINT(m_type) vformat("%s/%s:%s", Variant::OBJECT, PROPERTY_HINT_RESOURCE_TYPE, m_type)
+#endif
+
 namespace zylann {
+
+// Get the name of a Godot class as a Godot String.
+#if defined(ZN_GODOT)
+template <typename T>
+inline String get_class_name_str() {
+	return T::get_class_static();
+}
+#elif defined(ZN_GODOT_EXTENSION)
+template <typename T>
+inline String get_class_name_str() {
+	// GodotCpp decided to use StringName instead
+	return String(T::get_class_static());
+}
+#endif
 
 // Turns out these functions are only used in editor for now.
 // They are generic, but I have to wrap them, otherwise GCC throws warnings-as-errors for them being unused.
@@ -33,6 +54,8 @@ struct GodotPropertyInfo {
 	uint32_t usage;
 };
 void get_property_list(const Object &obj, std::vector<GodotPropertyInfo> &out_properties);
+
+void set_object_edited(Object &obj);
 
 #endif
 

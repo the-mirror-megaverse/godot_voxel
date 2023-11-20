@@ -42,7 +42,6 @@ void VoxelModifierMesh::apply(VoxelModifierContext ctx) const {
 
 	// TODO VoxelMeshSDF isn't preventing scripts from writing into this buffer from a different thread.
 	// I can't think of a reason to manually modify the buffer of a VoxelMeshSDF at the moment.
-	RWLockRead buffer_rlock(buffer.get_lock());
 
 	const Vector3f min_pos = _mesh_sdf->get_aabb_min_pos();
 	const Vector3f max_pos = _mesh_sdf->get_aabb_max_pos();
@@ -135,8 +134,10 @@ void VoxelModifierMesh::get_shader_data(ShaderData &out_shader_data) {
 		_shader_data_need_update = false;
 	}
 
-	out_shader_data.detail_rendering_shader_rid =
+	out_shader_data.shader_rids[ShaderData::TYPE_DETAIL] =
 			VoxelEngine::get_singleton().get_detail_modifier_sphere_shader().get_rid();
+	out_shader_data.shader_rids[ShaderData::TYPE_BLOCK] =
+			VoxelEngine::get_singleton().get_block_modifier_sphere_shader().get_rid();
 	out_shader_data.params = _shader_data;
 }
 

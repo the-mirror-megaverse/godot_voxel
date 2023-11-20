@@ -7,6 +7,8 @@ Implementation of [VoxelTool](VoxelTool.md) specialized for uses on [VoxelTerrai
 
 ## Description: 
 
+Functions in this class are specific to [VoxelTerrain](VoxelTerrain.md). For generic functions, you may also check [VoxelTool](VoxelTool.md).
+
 It's not a class to instantiate alone, you may get it from [VoxelTerrain](VoxelTerrain.md) using the `get_voxel_tool()` method.
 
 ## Methods: 
@@ -38,4 +40,4 @@ Picks random voxels within the specified area and executes a function on them. T
 
 The given callback takes two arguments: voxel position (Vector3i), voxel value (int).
 
-_Generated on Mar 26, 2023_
+_Generated on Jul 23, 2023_

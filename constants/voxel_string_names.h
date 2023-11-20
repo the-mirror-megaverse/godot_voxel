@@ -2,6 +2,7 @@
 #define VOXEL_STRING_NAMES_H
 
 #include "../util/godot/core/string_name.h"
+#include "../util/math/ortho_basis.h"
 
 namespace zylann::voxel {
 
@@ -23,6 +24,9 @@ public:
 
 	StringName block_loaded;
 	StringName block_unloaded;
+
+	StringName mesh_block_entered;
+	StringName mesh_block_exited;
 
 	StringName store_colors_in_texture;
 	StringName scale;
@@ -56,12 +60,37 @@ public:
 	StringName Add;
 	StringName Remove;
 	StringName EditorIcons;
+	StringName EditorFonts;
 	StringName Pin;
 	StringName ExternalLink;
+	StringName Search;
+	StringName source;
+	StringName _dummy_function;
+	StringName grab_focus;
 #endif
 
 	StringName _rpc_receive_blocks;
 	StringName _rpc_receive_area;
+
+	StringName unnamed;
+	StringName air;
+	StringName cube;
+
+	StringName axis;
+	StringName direction;
+	StringName rotation;
+	StringName x;
+	StringName y;
+	StringName z;
+	StringName negative_x;
+	StringName negative_y;
+	StringName negative_z;
+	StringName positive_x;
+	StringName positive_y;
+	StringName positive_z;
+
+	FixedArray<StringName, math::ORTHO_ROTATION_COUNT> ortho_rotation_names;
+	String ortho_rotation_enum_hint_string;
 };
 
 } // namespace zylann::voxel

@@ -19,6 +19,7 @@ enum Category {
 	CATEGORY_DEBUG,
 	CATEGORY_FUNCTIONS,
 	CATEGORY_RELAY,
+	CATEGORY_CONSTANT,
 	CATEGORY_COUNT
 };
 
@@ -61,8 +62,8 @@ struct NodeType {
 		bool has_range = false;
 		bool multiline = false;
 		bool hidden = false;
-		int min_value;
-		int max_value;
+		Variant min_value;
+		Variant max_value;
 		std::vector<std::string> enum_items;
 
 		Param(String p_name, Variant::Type p_type, Variant p_default_value = Variant()) :

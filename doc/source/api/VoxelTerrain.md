@@ -22,6 +22,7 @@ Type        | Name                                                              
 `int`       | [max_view_distance](#i_max_view_distance)                                | 128                                                                                   
 `int`       | [mesh_block_size](#i_mesh_block_size)                                    | 16                                                                                    
 `bool`      | [run_stream_in_editor](#i_run_stream_in_editor)                          | true                                                                                  
+`bool`      | [use_gpu_generation](#i_use_gpu_generation)                              | false                                                                                 
 <p></p>
 
 ## Methods: 
@@ -45,15 +46,19 @@ Return                                                                          
 
 ## Signals: 
 
-- block_loaded( [Vector3](https://docs.godotengine.org/en/stable/classes/class_vector3.html) position ) 
+- block_loaded( [Vector3i](https://docs.godotengine.org/en/stable/classes/class_vector3i.html) position ) 
 
 Emitted when a new data block is loaded from stream.
 
 Note: it might be not visible yet.
 
-- block_unloaded( [Vector3](https://docs.godotengine.org/en/stable/classes/class_vector3.html) position ) 
+- block_unloaded( [Vector3i](https://docs.godotengine.org/en/stable/classes/class_vector3i.html) position ) 
 
 Emitted when a data block is unloaded due to being outside view distance.
+
+- mesh_block_entered( [Vector3i](https://docs.godotengine.org/en/stable/classes/class_vector3i.html) position ) 
+
+- mesh_block_exited( [Vector3i](https://docs.godotengine.org/en/stable/classes/class_vector3i.html) position ) 
 
 ## Property Descriptions
 
@@ -104,6 +109,10 @@ Note: there is an internal limit of 512 for constant LOD terrains, because going
 Makes the terrain appear in the editor.
 
 Important: this option will turn off automatically if you setup a script world generator. Modifying scripts while they are in use by threads causes undefined behaviors. You can still turn on this option if you need a preview, but it is strongly advised to turn it back off and wait until all generation has finished before you edit the script again.
+
+- [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html)<span id="i_use_gpu_generation"></span> **use_gpu_generation** = false
+
+Enables GPU block generation, which can speed it up. This is only valid for generators that support it. Vulkan is required.
 
 ## Method Descriptions
 
@@ -179,4 +188,4 @@ Note 3: saving is asynchronous and won't block the game. the save may complete o
 - [Vector3i](https://docs.godotengine.org/en/stable/classes/class_vector3i.html)<span id="i_voxel_to_data_block"></span> **voxel_to_data_block**( [Vector3](https://docs.godotengine.org/en/stable/classes/class_vector3.html) voxel_pos ) 
 
 
-_Generated on Mar 26, 2023_
+_Generated on Jul 23, 2023_

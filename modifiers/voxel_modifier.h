@@ -1,7 +1,7 @@
 #ifndef VOXEL_MODIFIER_H
 #define VOXEL_MODIFIER_H
 
-#include "../engine/compute_shader_parameters.h"
+#include "../engine/gpu/compute_shader_parameters.h"
 #include "../util/math/transform_3d.h"
 #include "../util/thread/rw_lock.h"
 
@@ -34,7 +34,9 @@ public:
 	virtual bool is_sdf() const = 0;
 
 	struct ShaderData {
-		RID detail_rendering_shader_rid;
+		enum Type { TYPE_BLOCK = 0, TYPE_DETAIL, TYPE_COUNT };
+
+		FixedArray<RID, TYPE_COUNT> shader_rids;
 		std::shared_ptr<ComputeShaderParameters> params;
 	};
 

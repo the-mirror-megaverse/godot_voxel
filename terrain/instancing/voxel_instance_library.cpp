@@ -52,11 +52,11 @@ void VoxelInstanceLibrary::clear() {
 	notify_property_list_changed();
 }
 
-int VoxelInstanceLibrary::find_item_by_name(String name) const {
+int VoxelInstanceLibrary::find_item_by_name(String p_name) const {
 	for (auto it = _items.begin(); it != _items.end(); ++it) {
 		const Ref<VoxelInstanceLibraryItem> &item = it->second;
 		ERR_FAIL_COND_V(item.is_null(), -1);
-		if (item->get_name() == name) {
+		if (item->get_item_name() == p_name) {
 			return it->first;
 		}
 	}
@@ -119,10 +119,10 @@ void VoxelInstanceLibrary::remove_listener(IListener *listener) {
 }
 
 bool VoxelInstanceLibrary::_set(const StringName &p_name, const Variant &p_value) {
-	const String name = p_name;
+	const String property_name = p_name;
 
-	if (name.begins_with("item_")) {
-		const int id = name.substr(5).to_int();
+	if (property_name.begins_with("item_")) {
+		const int id = property_name.substr(5).to_int();
 
 		Ref<VoxelInstanceLibraryItem> item = p_value;
 		ERR_FAIL_COND_V_MSG(item.is_null(), false, "Setting a null item is not allowed");
@@ -152,9 +152,9 @@ bool VoxelInstanceLibrary::_set(const StringName &p_name, const Variant &p_value
 }
 
 bool VoxelInstanceLibrary::_get(const StringName &p_name, Variant &r_ret) const {
-	const String name = p_name;
-	if (name.begins_with("item_")) {
-		const int id = name.substr(5).to_int();
+	const String property_name = p_name;
+	if (property_name.begins_with("item_")) {
+		const int id = property_name.substr(5).to_int();
 		auto it = _items.find(id);
 		if (it != _items.end()) {
 			r_ret = it->second;
@@ -166,10 +166,23 @@ bool VoxelInstanceLibrary::_get(const StringName &p_name, Variant &r_ret) const 
 
 void VoxelInstanceLibrary::_get_property_list(List<PropertyInfo> *p_list) const {
 	for (auto it = _items.begin(); it != _items.end(); ++it) {
-		const String name = "item_" + itos(it->first);
-		p_list->push_back(PropertyInfo(
-				Variant::OBJECT, name, PROPERTY_HINT_RESOURCE_TYPE, VoxelInstanceLibraryItem::get_class_static()));
+		const String property_name = "item_" + itos(it->first);
+		p_list->push_back(PropertyInfo(Variant::OBJECT, property_name, PROPERTY_HINT_RESOURCE_TYPE,
+				VoxelInstanceLibraryItem::get_class_static()));
 	}
+}
+
+PackedInt32Array VoxelInstanceLibrary::_b_get_all_item_ids() const {
+	PackedInt32Array ids;
+	ids.resize(_items.size());
+	// Doing this because in GDExtension builds assigning items has different syntax than modules... and it's faster
+	int *ids_w = ids.ptrw();
+	int i = 0;
+	for (auto it = _items.begin(); it != _items.end(); ++it) {
+		ids_w[i] = it->first;
+		++i;
+	}
+	return ids;
 }
 
 void VoxelInstanceLibrary::_bind_methods() {
@@ -178,6 +191,7 @@ void VoxelInstanceLibrary::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &VoxelInstanceLibrary::clear);
 	ClassDB::bind_method(D_METHOD("find_item_by_name", "name"), &VoxelInstanceLibrary::find_item_by_name);
 	ClassDB::bind_method(D_METHOD("get_item", "id"), &VoxelInstanceLibrary::_b_get_item);
+	ClassDB::bind_method(D_METHOD("get_all_item_ids"), &VoxelInstanceLibrary::_b_get_all_item_ids);
 
 	BIND_CONSTANT(MAX_ID);
 }

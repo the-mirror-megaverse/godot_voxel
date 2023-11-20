@@ -1,4 +1,5 @@
 #include "threaded_task_runner.h"
+#include "../container_funcs.h"
 #include "../godot/classes/time.h"
 #include "../profiling.h"
 #include "../string_funcs.h"
@@ -20,9 +21,18 @@ ThreadedTaskRunner::ThreadedTaskRunner() {}
 ThreadedTaskRunner::~ThreadedTaskRunner() {
 	destroy_all_threads();
 
+	// We don't have ownership over tasks, so it's an error to destroy the pool without handling them
+	if (_staged_tasks.size() != 0) {
+		ZN_PRINT_ERROR("There are staged tasks remaining!");
+	}
+	if (_tasks.size() != 0) {
+		ZN_PRINT_ERROR("There are tasks remaining!");
+	}
+	if (_spinning_tasks.size() != 0) {
+		ZN_PRINT_ERROR("There are spinning tasks remaining!");
+	}
 	if (_completed_tasks.size() != 0) {
-		// We don't have ownership over tasks, so it's an error to destroy the pool without handling them
-		ZN_PRINT_ERROR("There are unhandled completed tasks remaining!");
+		ZN_PRINT_ERROR("There are completed tasks remaining!");
 	}
 }
 
@@ -72,25 +82,23 @@ void ThreadedTaskRunner::set_thread_count(uint32_t count) {
 	_thread_count = count;
 }
 
-void ThreadedTaskRunner::set_batch_count(uint32_t count) {
-	_batch_count = count;
-}
-
 void ThreadedTaskRunner::set_priority_update_period(uint32_t milliseconds) {
 	_priority_update_period_ms = milliseconds;
 }
 
 void ThreadedTaskRunner::enqueue(IThreadedTask *task, bool serial) {
+	ZN_PROFILE_SCOPE();
 	ZN_ASSERT(task != nullptr);
 	TaskItem t;
 	t.task = task;
 	t.is_serial = serial;
 	{
-		MutexLock lock(_tasks_mutex);
-		_tasks.push_back(t);
+		MutexLock lock(_staged_tasks_mutex);
+		_staged_tasks.push_back(t);
 		++_debug_received_tasks;
 	}
 	// TODO Do I need to post a certain amount of times?
+	// I feel like this causes the semaphore to be passed too many times when tasks become empty
 	_tasks_semaphore.post();
 }
 
@@ -101,18 +109,20 @@ void ThreadedTaskRunner::enqueue(Span<IThreadedTask *> new_tasks, bool serial) {
 	}
 #endif
 	{
-		MutexLock lock(_tasks_mutex);
-		const size_t dst_begin = _tasks.size();
-		_tasks.resize(_tasks.size() + new_tasks.size());
+		MutexLock lock(_staged_tasks_mutex);
+		const size_t dst_begin = _staged_tasks.size();
+		_staged_tasks.resize(_staged_tasks.size() + new_tasks.size());
 		for (size_t i = 0; i < new_tasks.size(); ++i) {
+			IThreadedTask *new_task = new_tasks[i];
 			TaskItem t;
-			t.task = new_tasks[i];
+			t.task = new_task;
 			t.is_serial = serial;
-			_tasks[dst_begin + i] = t;
+			_staged_tasks[dst_begin + i] = t;
 		}
 		_debug_received_tasks += new_tasks.size();
 	}
 	// TODO Do I need to post a certain amount of times?
+	// Should it be the number of threads instead of number of tasks?
 	for (size_t i = 0; i < new_tasks.size(); ++i) {
 		_tasks_semaphore.post();
 	}
@@ -137,6 +147,7 @@ void ThreadedTaskRunner::thread_func(ThreadData &data) {
 	data.debug_state = STATE_RUNNING;
 
 	std::vector<TaskItem> tasks;
+	std::vector<TaskItem> postponed_tasks;
 	std::vector<IThreadedTask *> cancelled_tasks;
 
 	while (!data.stop) {
@@ -146,57 +157,91 @@ void ThreadedTaskRunner::thread_func(ThreadData &data) {
 			ZN_PROFILE_SCOPE_NAMED("Task pickup");
 
 			data.debug_state = STATE_PICKING;
-			const uint64_t now = Time::get_singleton()->get_ticks_msec();
+
+			ZN_ASSERT(tasks.size() == 0);
+
+			// Pick a postponed task if any.
+			// We will still run a task from the main prioritized queue as well so postponed tasks will not
+			// monopolize execution.
+			//
+			// TODO What if postponed tasks remain while one big task is locking what they need to access?
+			// Those postponed tasks will sort of spinlock with no sleeping. Is that a bad thing?
+			{
+				MutexLock lock2(_spinning_tasks_mutex);
+				if (_spinning_tasks.size() > 0) {
+					tasks.push_back(_spinning_tasks.front());
+					_spinning_tasks.pop();
+				}
+			}
 
 			{
+				// TODO When tasks are very short and there are a lot of tasks, one thread can monopolize this mutex.
+				//
 				MutexLock lock(_tasks_mutex);
 
-				// Pick best tasks
-				for (uint32_t bi = 0; bi < _batch_count && _tasks.size() != 0; ++bi) {
-					size_t best_index = 0; // Take first by default, this is a valid index
-					TaskPriority highest_priority = TaskPriority::min();
-					bool picked_task = false;
+				// Move tasks from the staging queue.
+				// Lock with minimal risk of blocking the main thread, it should be very short.
+				if (_staged_tasks_mutex.try_lock()) {
+					append_array(_tasks, _staged_tasks);
+					_staged_tasks.clear();
+					_staged_tasks_mutex.unlock();
+				}
 
-					// Find best task to pick
-					// TODO Optimize: this takes a lot of time when there are many queued tasks. Use a better container?
-					for (size_t i = 0; i < _tasks.size();) {
-						TaskItem &item = _tasks[i];
-						ZN_ASSERT(item.task != nullptr);
+				// Pick best tasks from the prioritized queue
+				if (_tasks.size() != 0) {
+					// Sort periodically.
+					// The point to keep sorting after tasks have been inserted is in case there are lots of pending
+					// tasks, which can take more than a few seconds to be processed. A player can move fast and the
+					// priority location can change. Some tasks can even become irrelevant before they are run,so we
+					// may remove them from the list so they don't slow down the process.
+					const uint64_t now = Time::get_singleton()->get_ticks_msec();
+					if (now - _last_priority_update_time_ms > _priority_update_period_ms) {
+						ZN_PROFILE_SCOPE_NAMED("Sorting");
 
-						// Process priority and cancellation
-						if (now - item.last_priority_update_time_ms > _priority_update_period_ms) {
-							// Calling `get_priority()` first since it can update cancellation
-							// (not clear API tho, might review that in the future)
-							item.cached_priority = item.task->get_priority();
+						{
+							ZN_PROFILE_SCOPE_NAMED("Update priorities");
+							for (unsigned int i = 0; i < _tasks.size();) {
+								TaskItem &item = _tasks[i];
+								item.cached_priority = item.task->get_priority();
 
-							if (item.task->is_cancelled()) {
-								cancelled_tasks.push_back(item.task);
-								_tasks[i] = _tasks.back();
-								_tasks.pop_back();
-								continue;
+								if (item.task->is_cancelled()) {
+									cancelled_tasks.push_back(item.task);
+									_tasks[i] = _tasks.back();
+									_tasks.pop_back();
+									continue;
+								}
+
+								++i;
 							}
-
-							item.last_priority_update_time_ms = now;
 						}
 
-						// Pick item if it has better priority.
-						// If the item is serial, there must not be a serial task already running.
-						if (item.cached_priority > highest_priority && !(item.is_serial && _is_serial_task_running)) {
-							highest_priority = item.cached_priority;
-							// This index should remain valid even if some tasks are removed because the "remove and
-							// swap back" technique only affects items coming after
-							best_index = i;
-							picked_task = true;
-						}
+						struct TaskComparator {
+							inline bool operator()(const TaskItem &a, const TaskItem &b) const {
+								// Tasks with highest priority come last (easier pop back)
+								return a.cached_priority < b.cached_priority;
+							}
+						};
+						SortArray<TaskItem, TaskComparator> sorter;
+						sorter.sort(_tasks.data(), _tasks.size());
 
-						++i;
+						_last_priority_update_time_ms = Time::get_singleton()->get_ticks_msec();
 					}
 
-					if (picked_task) {
-						tasks.push_back(_tasks[best_index]);
-						ZN_ASSERT(best_index < _tasks.size());
-						_tasks[best_index] = _tasks.back();
-						_tasks.pop_back();
+					// Pick task with highest priority if possible
+					// for (int i = int(_tasks.size()) - 1; i >= 0; --i) {
+					for (unsigned int i = _tasks.size(); i-- > 0;) {
+						const TaskItem item = _tasks[i];
+						// Serial tasks are a bit annoying in that regard...
+						// We could make the save/load tasks accept more than one work, which is the best way to do
+						// serial work, but in some cases it's harder to know in advance...
+						if (item.is_serial && _is_serial_task_running) {
+							// Try previous task
+							continue;
+						}
+
+						tasks.push_back(item);
+						_tasks.erase(_tasks.begin() + i);
+						break;
 					}
 
 				} // For each task to pick
@@ -224,10 +269,9 @@ void ThreadedTaskRunner::thread_func(ThreadData &data) {
 
 		if (cancelled_tasks.size() > 0) {
 			MutexLock lock(_completed_tasks_mutex);
-			for (size_t i = 0; i < cancelled_tasks.size(); ++i) {
-				_completed_tasks.push_back(cancelled_tasks[i]);
-				++_debug_completed_tasks;
-			}
+			const size_t count = cancelled_tasks.size();
+			append_array(_completed_tasks, cancelled_tasks);
+			_debug_completed_tasks += count;
 			cancelled_tasks.clear();
 		}
 
@@ -260,10 +304,12 @@ void ThreadedTaskRunner::thread_func(ThreadData &data) {
 			for (size_t i = 0; i < tasks.size(); ++i) {
 				TaskItem &item = tasks[i];
 				if (!item.task->is_cancelled()) {
-					ThreadedTaskContext ctx;
-					ctx.thread_index = data.index;
+					ThreadedTaskContext ctx{ uint8_t(data.index),
+						// By default, if the task does not set this status, it will be considered complete after run
+						ThreadedTaskContext::STATUS_COMPLETE };
 					data.debug_running_task_name = item.task->get_debug_name();
 					item.task->run(ctx);
+					item.status = ctx.status;
 					data.debug_running_task_name = nullptr;
 				}
 			}
@@ -280,13 +326,39 @@ void ThreadedTaskRunner::thread_func(ThreadData &data) {
 			{
 				MutexLock lock(_completed_tasks_mutex);
 				for (size_t i = 0; i < tasks.size(); ++i) {
-					TaskItem &item = tasks[i];
-					_completed_tasks.push_back(item.task);
-					++_debug_completed_tasks;
+					const TaskItem &item = tasks[i];
+					switch (item.status) {
+						case ThreadedTaskContext::STATUS_COMPLETE:
+							_completed_tasks.push_back(item.task);
+							++_debug_completed_tasks;
+							break;
+
+						case ThreadedTaskContext::STATUS_POSTPONED:
+							postponed_tasks.push_back(item);
+							break;
+
+						case ThreadedTaskContext::STATUS_TAKEN_OUT:
+							// Drop task pointer, its ownership may have been passed to another task
+							++_debug_taken_out_tasks;
+							break;
+
+						default:
+							ZN_PRINT_ERROR("Unknown task status");
+							break;
+					}
 				}
 			}
 
 			tasks.clear();
+
+			{
+				MutexLock lock(_spinning_tasks_mutex);
+				for (const TaskItem &item : postponed_tasks) {
+					_spinning_tasks.push(item);
+				}
+			}
+
+			postponed_tasks.clear();
 		}
 	}
 
@@ -301,10 +373,20 @@ void ThreadedTaskRunner::wait_for_all_tasks() {
 
 	// Wait until all tasks have been taken
 	while (true) {
+		// TODO this is not really precise, because running tasks can schedule more tasks. Not sure if we need it?
+		// Waiting for all threads to be in waiting state is a more definitive solution.
+		bool any_staged_tasks = false;
 		{
+			MutexLock lock3(_staged_tasks_mutex);
+			any_staged_tasks = _staged_tasks.size() > 0;
+		}
+		if (!any_staged_tasks) {
 			MutexLock lock(_tasks_mutex);
 			if (_tasks.size() == 0) {
-				break;
+				MutexLock lock2(_spinning_tasks_mutex);
+				if (_spinning_tasks.size() == 0) {
+					break;
+				}
 			}
 		}
 
@@ -353,7 +435,12 @@ const char *ThreadedTaskRunner::get_thread_debug_task_name(unsigned int thread_i
 }
 
 unsigned int ThreadedTaskRunner::get_debug_remaining_tasks() const {
-	return _debug_received_tasks - _debug_completed_tasks;
+	return _debug_received_tasks - _debug_completed_tasks - _debug_taken_out_tasks;
+}
+
+std::vector<IThreadedTask *> &ThreadedTaskRunner::get_completed_tasks_temp_tls() {
+	static thread_local std::vector<IThreadedTask *> tls_temp;
+	return tls_temp;
 }
 
 } // namespace zylann

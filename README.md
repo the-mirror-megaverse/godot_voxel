@@ -41,12 +41,13 @@ Roadmap
 
 These are some ideas that may or may not be implemented in the future:
 
+* Multiplayer
 * Texturing on smooth terrain
-* Editor preview and authoring
+* Authoring in editor
 * Improving LOD performance
-* Other meshing algorithms (e.g. dual contouring)
-* GPU offloading (Maybe when Godot 4+ supports compute shaders)
-* Migrate to a GDNative plugin (post Godot 4, needs work)
+* Improving instancing
+* GPU offloading
+* Make GDExtension work (compiles, but GDExtension has many problems)
 
 
 Supporters
@@ -76,6 +77,7 @@ NoFr1ends (Lynx)
 Kluskey (Jared McCluskey)
 Trey2k (Trey Moller)
 marcinn (Marcin Nowak)
+bfoster68
 ```
 
 ### Supporters
@@ -88,6 +90,9 @@ stackdump (stackdump.eth)
 Treer
 MrGreaterThan
 lenis0012
+ilievmark (Iliev Mark)
+OrbitalHare
+matthewhilton (Matthew Hilton)
 ```
 
 

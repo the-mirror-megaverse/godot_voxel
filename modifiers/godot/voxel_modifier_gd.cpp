@@ -1,4 +1,5 @@
 #include "voxel_modifier_gd.h"
+#include "../../util/godot/core/array.h"
 #include "../../util/log.h"
 #include "../../util/math/conv.h"
 #include "../voxel_modifier_sdf.h"
@@ -31,8 +32,8 @@ void VoxelModifier::set_operation(Operation op) {
 	if (_volume == nullptr) {
 		return;
 	}
-	VoxelData &data = _volume->get_storage();
-	VoxelModifierStack &modifiers = data.get_modifiers();
+	VoxelData &voxel_data = _volume->get_storage();
+	VoxelModifierStack &modifiers = voxel_data.get_modifiers();
 	zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
 	ZN_ASSERT_RETURN(modifier != nullptr);
 	ZN_ASSERT_RETURN(modifier->is_sdf());
@@ -53,8 +54,8 @@ void VoxelModifier::set_smoothness(float s) {
 	if (_volume == nullptr) {
 		return;
 	}
-	VoxelData &data = _volume->get_storage();
-	VoxelModifierStack &modifiers = data.get_modifiers();
+	VoxelData &voxel_data = _volume->get_storage();
+	VoxelModifierStack &modifiers = voxel_data.get_modifiers();
 	zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
 	ZN_ASSERT_RETURN(modifier != nullptr);
 	ZN_ASSERT_RETURN(modifier->is_sdf());
@@ -80,8 +81,8 @@ void VoxelModifier::_notification(int p_what) {
 			_volume = volume;
 
 			if (_volume != nullptr) {
-				VoxelData &data = _volume->get_storage();
-				VoxelModifierStack &modifiers = data.get_modifiers();
+				VoxelData &voxel_data = _volume->get_storage();
+				VoxelModifierStack &modifiers = voxel_data.get_modifiers();
 				const uint32_t id = modifiers.allocate_id();
 				zylann::voxel::VoxelModifier *modifier = create(modifiers, id);
 
@@ -98,12 +99,14 @@ void VoxelModifier::_notification(int p_what) {
 				// a lot of modifiers on the map, but there is no distinction possible in Godot at the moment...
 				post_edit_modifier(*_volume, modifier->get_aabb());
 			}
+
+			update_configuration_warnings();
 		} break;
 
 		case NOTIFICATION_UNPARENTED: {
 			if (_volume != nullptr) {
-				VoxelData &data = _volume->get_storage();
-				VoxelModifierStack &modifiers = data.get_modifiers();
+				VoxelData &voxel_data = _volume->get_storage();
+				VoxelModifierStack &modifiers = voxel_data.get_modifiers();
 				zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
 				ZN_ASSERT_RETURN_MSG(modifier != nullptr, "The modifier node wasn't linked properly");
 				post_edit_modifier(*_volume, modifier->get_aabb());
@@ -115,8 +118,8 @@ void VoxelModifier::_notification(int p_what) {
 
 		case Node3D::NOTIFICATION_LOCAL_TRANSFORM_CHANGED: {
 			if (_volume != nullptr && is_inside_tree()) {
-				VoxelData &data = _volume->get_storage();
-				VoxelModifierStack &modifiers = data.get_modifiers();
+				VoxelData &voxel_data = _volume->get_storage();
+				VoxelModifierStack &modifiers = voxel_data.get_modifiers();
 				zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
 				ZN_ASSERT_RETURN(modifier != nullptr);
 
@@ -134,6 +137,31 @@ void VoxelModifier::_notification(int p_what) {
 		} break;
 	}
 }
+
+#ifdef TOOLS_ENABLED
+
+#if defined(ZN_GODOT)
+PackedStringArray VoxelModifier::get_configuration_warnings() const {
+	PackedStringArray warnings;
+	get_configuration_warnings(warnings);
+	return warnings;
+}
+#elif defined(ZN_GODOT_EXTENSION)
+PackedStringArray VoxelModifier::_get_configuration_warnings() const {
+	PackedStringArray warnings;
+	get_configuration_warnings(warnings);
+	return warnings;
+}
+#endif
+
+void VoxelModifier::get_configuration_warnings(PackedStringArray &warnings) const {
+	if (_volume == nullptr) {
+		warnings.append(ZN_TTR("The parent of this node must be of type {0}.")
+								.format(varray(VoxelLodTerrain::get_class_static())));
+	}
+}
+
+#endif
 
 void VoxelModifier::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_operation", "op"), &VoxelModifier::set_operation);

@@ -6,6 +6,7 @@
 #include "../streams/voxel_stream.h"
 #include "../util/thread/mutex.h"
 #include "voxel_data_map.h"
+#include "voxel_spatial_lock.h"
 
 namespace zylann::voxel {
 
@@ -86,6 +87,8 @@ public:
 		return _streaming_enabled;
 	}
 
+	void set_full_load_completed(bool complete);
+
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Voxel queries.
 	// When not specified, the used LOD index is 0.
@@ -129,7 +132,7 @@ public:
 	// Flags all blocks in the given area as modified at LOD0.
 	// Also marks them as requiring LOD updates (if lod count is 1 this has no effect).
 	// Optionally, returns a list of affected block positions which did not require LOD updates before.
-	void mark_area_modified(Box3i p_voxel_box, std::vector<Vector3i> *lod0_new_blocks_to_lod);
+	void mark_area_modified(Box3i p_voxel_box, std::vector<Vector3i> *lod0_new_blocks_to_lod, bool require_lod_updates);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Block-aware API
@@ -221,7 +224,7 @@ public:
 	// Gets missing blocks out of the given block positions.
 	// WARNING: positions outside bounds will be considered missing too.
 	// TODO Don't consider positions outside bounds to be missing? This is only a byproduct of migrating old
-	// code. It doesnt check this because the code using this function already does it (a bit more efficiently,
+	// code. It doesn't check this because the code using this function already does it (a bit more efficiently,
 	// but still).
 	void get_missing_blocks(
 			Span<const Vector3i> block_positions, unsigned int lod_index, std::vector<Vector3i> &out_missing) const;
@@ -239,7 +242,11 @@ public:
 
 	// Gets blocks with voxels at the given LOD and indexes them in a grid. This will query every location
 	// intersecting the box at the specified LOD, so if the area is large, you may want to do a broad check first.
+	// WARNING: data isn't locked, you have to keep a shared reference to VoxelData in order to use VoxelSpatialLock.
 	void get_blocks_grid(VoxelDataGrid &grid, Box3i box_in_voxels, unsigned int lod_index) const;
+
+	// TODO Areas that use this accessor might as well move their logic in this class
+	VoxelSpatialLock &get_spatial_lock(unsigned int lod_index) const;
 
 	// Tests the presence of edited blocks in the given area by looking up LOD mips. It can report false positives due
 	// to the broad nature of the check, but runs a lot faster than a full test. This is only usable with volumes
@@ -277,10 +284,21 @@ private:
 	struct Lod {
 		// Storage for edited and cached voxels.
 		VoxelDataMap map;
+
+		// If the map and spatial locks have to be both locked at a given moment, it must be done in the following order
+		// to avoid deadlocks:
+		// - Spatial lock first
+		// - Map lock second, while the spatial lock is acquired
+		// If two lods need really need to be locked as well, lock the lower index first, and higher index next.
+
+		// Lock protecting the map itself, because it uses a hashmap.
 		// This lock should be locked in write mode only when the map gets modified (adding or removing blocks).
 		// Otherwise it may be locked in read mode.
 		// It is possible to unlock it after we are done querying the map.
 		RWLock map_lock;
+		// This should be used when reading or writing voxels/metadata in blocks. It uses block coordinates as
+		// spatial unit.
+		mutable VoxelSpatialLock spatial_lock;
 	};
 
 	static void pre_generate_box(Box3i voxel_box, Span<Lod> lods, unsigned int data_block_size, bool streaming,
@@ -311,8 +329,8 @@ private:
 	//
 	// TODO Optimize: (low priority) this takes more than 5Kb in the object, even when not using LODs.
 	// Each LOD contains an RWLock, which is 242 bytes, so *24 it adds up quickly.
-	// A solution would be to allocate LODs dynamically in the constructor (the potential presence of LODs doesnt
-	// need to change after being constructed, there is no use case for that so far)
+	// A solution would be to allocate LODs dynamically in the constructor (the potential presence of LODs doesn't
+	// need to change after being constructed, there is no use case for that so far).
 	FixedArray<Lod, constants::MAX_LOD> _lods;
 
 	// Area within which voxels can exist.
@@ -327,6 +345,11 @@ private:
 	// a block isn't stored, it means we can use the generator and modifiers to obtain its data. This mostly changes
 	// how this class is used, streaming itself is not directly implemented in this class.
 	bool _streaming_enabled = true;
+
+	// When streaming is disabled, this will tell if all data has finished loading.
+	// This is because *everything* will load, we can't tell in advance what is loaded and what isn't by looking at
+	// individual blocks.
+	bool _full_load_completed = false;
 
 	// Procedural generation stack
 	VoxelModifierStack _modifiers;

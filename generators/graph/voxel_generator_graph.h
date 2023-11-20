@@ -53,6 +53,7 @@ public:
 	int get_used_channels_mask() const override;
 
 	Result generate_block(VoxelGenerator::VoxelQueryData &input) override;
+	bool generate_broad_block(VoxelGenerator::VoxelQueryData &input) override;
 	// float generate_single(const Vector3i &position);
 	bool supports_single_generation() const override {
 		return true;
@@ -121,6 +122,13 @@ private:
 	Vector2 _b_debug_analyze_range(Vector3 min_pos, Vector3 max_pos) const;
 	Dictionary _b_compile();
 	float _b_debug_measure_microseconds_per_voxel(bool singular);
+#ifdef TOOLS_ENABLED
+	// This exists because some custom editors will edit an internal object instead of the resource itself
+	// (here the "main function" object). And because Godot determines wether or not a resource should be saved based on
+	// UndoRedo, if the containing resource doesn't appear in UndoRedo actions, it will consider the resource hasn't
+	// changed and won't save it... so we call a dummy function first, just to make Godot understand that...
+	void _b_dummy_function() {}
+#endif
 	Dictionary get_graph_as_variant_data() const;
 	void load_graph_from_variant_data(Dictionary data);
 

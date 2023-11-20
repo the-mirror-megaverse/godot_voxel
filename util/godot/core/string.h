@@ -18,6 +18,8 @@ using namespace godot;
 #include <vector>
 #endif
 
+#include "../macros.h"
+
 #include "../../span.h"
 
 namespace zylann {
@@ -32,6 +34,18 @@ inline String to_godot(const std::string_view sv) {
 
 PackedStringArray to_godot(const std::vector<std::string_view> &svv);
 PackedStringArray to_godot(const std::vector<std::string> &sv);
+
+template <typename T>
+String join_comma_separated(Span<const T> items) {
+	String str;
+	for (unsigned int i = 0; i < items.size(); ++i) {
+		if (i > 0) {
+			str += ", ";
+		}
+		str += Variant(items[i]).stringify();
+	}
+	return str;
+}
 
 #endif
 

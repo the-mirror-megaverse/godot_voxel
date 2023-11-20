@@ -7,50 +7,72 @@ on:
 
 # Global Cache Settings
 env:
-  GODOT_BASE_BRANCH: "4.0"
   SCONS_CACHE_LIMIT: 4096
 
 jobs:
-  linux-editor:
+  linux:
     runs-on: "ubuntu-20.04"
     name: ${{matrix.name}}
 
     strategy:
       matrix:
         include:
-          - name: Editor debug build
-            float: 32
+          # Just to check if building still works in that version
+          - name: Editor debug build (4.0)
+            precision: single
             target: editor
             dev_build: yes
             #dev_mode: yes # Flags specified manually. We want extra checks but we don't want to compile tests
             production: no
             executable_name: godot.linuxbsd.editor.dev.x86_64
+            godot_base_branch: "4.0"
+
+          # Just to check if building works in Godot master
+          - name: Editor debug build (master)
+            precision: single
+            target: editor
+            dev_build: yes
+            #dev_mode: yes # Flags specified manually. We want extra checks but we don't want to compile tests
+            production: no
+            executable_name: godot.linuxbsd.editor.dev.x86_64
+            godot_base_branch: "master"
+
+          - name: Editor debug build
+            precision: single
+            target: editor
+            dev_build: yes
+            #dev_mode: yes # Flags specified manually. We want extra checks but we don't want to compile tests
+            production: no
+            executable_name: godot.linuxbsd.editor.dev.x86_64
+            godot_base_branch: "4.1"
 
           - name: Editor build
-            float: 32
+            precision: single
             target: editor
             dev_build: no
             #dev_mode: no
             production: yes
             executable_name: godot.linuxbsd.editor.x86_64
+            godot_base_branch: "4.1"
 
           - name: Editor build with 64-bit floats
-            float: 64
+            precision: double
             target: editor
             dev_build: no
             #dev_mode: no
             production: yes
             executable_name: godot.linuxbsd.editor.double.x86_64
+            godot_base_branch: "4.1"
 
     steps:
       # Clone Godot
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           repository: godotengine/godot
-          ref: "4.0"
+          ref: ${{ matrix.godot_base_branch }}
 
       # Clone our module under the correct directory
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: modules/voxel
 
@@ -90,20 +112,20 @@ jobs:
 
       # Upload cache on completion and check it out now
       - name: Load .scons_cache directory
-        id: linux-editor-cache
-        uses: actions/cache@v2
+        id: linux-cache
+        uses: actions/cache@v3
         with:
           path: ${{github.workspace}}/.scons_cache/
-          key: ${{github.job}}-${{env.GODOT_BASE_BRANCH}}-${{github.ref}}-${{github.sha}}
+          key: ${{matrix.executable_name}}-${{matrix.godot_base_branch}}-${{github.ref}}-${{github.sha}}
           restore-keys: |
-            ${{github.job}}-${{env.GODOT_BASE_BRANCH}}-${{github.ref}}-${{github.sha}}
-            ${{github.job}}-${{env.GODOT_BASE_BRANCH}}-${{github.ref}}
-            ${{github.job}}-${{env.GODOT_BASE_BRANCH}}
+            ${{matrix.executable_name}}-${{matrix.godot_base_branch}}-${{github.ref}}-${{github.sha}}
+            ${{matrix.executable_name}}-${{matrix.godot_base_branch}}-${{github.ref}}
+            ${{matrix.executable_name}}-${{matrix.godot_base_branch}}
 
       # [Already provided by the custom buildroot]
       # Use python 3.x release (works cross platform; best to keep self contained in it's own step)
       # - name: Set up Python 3.x
-      #   uses: actions/setup-python@v2
+      #   uses: actions/setup-python@v4
       #   with:
       #     # Semantic version range syntax or exact version of a Python version
       #     python-version: '3.x'
@@ -125,10 +147,10 @@ jobs:
           SCONS_CACHE: ${{github.workspace}}/.scons_cache/
         run: |
           PATH=${GITHUB_WORKSPACE}/x86_64-godot-linux-gnu_sdk-buildroot/bin:$PATH
-          scons -j2 verbose=yes warnings=extra werror=yes platform=linuxbsd tests=no dev_build=${{matrix.dev_build}} dev_mode=yes target=${{matrix.target}} production=${{matrix.production}} float=${{matrix.float}}
+          scons -j2 verbose=yes warnings=extra werror=yes platform=linuxbsd tests=no dev_build=${{matrix.dev_build}} dev_mode=yes target=${{matrix.target}} production=${{matrix.production}} precision=${{matrix.precision}}
 
       # Make build available
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         if: ${{ matrix.dev_build != 'yes' }}
         with:
           name: ${{matrix.executable_name}}

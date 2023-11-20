@@ -69,6 +69,11 @@ inline Transform3f to_transform3f(const Transform3D &t) {
 // ZN => Godot
 
 template <typename T>
+inline Vector2 to_vec2(const Vector2T<T> v) {
+	return Vector2(v.x, v.y);
+}
+
+template <typename T>
 inline Vector2i to_vec2i(const Vector2T<T> v) {
 	return Vector2i(v.x, v.y);
 }
@@ -100,6 +105,11 @@ inline Transform3D to_transform3(const Transform3f &t) {
 template <typename T>
 inline Vector3d to_vec3d(const Vector3T<T> v) {
 	return Vector3d(v.x, v.y, v.z);
+}
+
+template <typename T>
+inline Vector3f to_vec3f(const Vector3T<T> v) {
+	return Vector3f(v.x, v.y, v.z);
 }
 
 inline bool can_convert_to_i16(Vector3i p) {

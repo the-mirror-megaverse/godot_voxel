@@ -4,6 +4,8 @@
 #include "../../generators/graph/voxel_generator_graph.h"
 #include "../../util/godot/classes/ref_counted.h"
 
+ZN_GODOT_FORWARD_DECLARE(class EditorUndoRedoManager)
+
 namespace zylann::voxel {
 
 class VoxelGraphEditor;

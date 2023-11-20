@@ -74,3 +74,15 @@ func _export_to_cpp():
 		root + "transvoxel_minimal_shader.h", 
 		"g_transvoxel_minimal_shader"
 	)
+
+	TextToCpp.export_to_cpp(
+		"block_generator_template.glsl",
+		root + "block_generator_shader_template.h", 
+		"g_block_generator_shader_template"
+	)
+
+	TextToCpp.export_to_cpp(
+		"block_modifier_template.glsl",
+		root + "block_modifier_shader_template.h", 
+		"g_block_modifier_shader_template"
+	)

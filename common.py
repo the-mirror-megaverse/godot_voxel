@@ -26,6 +26,7 @@ def get_sources(env, is_editor_build):
         "constants/*.cpp",
 
         "meshers/blocky/*.cpp",
+        "meshers/blocky/types/*.cpp",
         "meshers/transvoxel/*.cpp",
         "meshers/dmc/*.cpp",
         "meshers/cubes/*.cpp",
@@ -51,6 +52,8 @@ def get_sources(env, is_editor_build):
         "terrain/variable_lod/*.cpp",
 
         "engine/*.cpp",
+        "engine/gpu/*.cpp",
+
         "edition/*.cpp",
         "shaders/*.cpp",
 
@@ -66,8 +69,10 @@ def get_sources(env, is_editor_build):
         "util/tasks/*.cpp",
         "util/tasks/godot/*.cpp",
 
+        "util/godot/classes/array_mesh.cpp",
         "util/godot/classes/concave_polygon_shape_3d.cpp",
         "util/godot/classes/geometry_2d.cpp",
+        "util/godot/classes/input_event_key.cpp",
         "util/godot/classes/mesh.cpp",
         "util/godot/classes/multimesh.cpp",
         "util/godot/classes/node.cpp",
@@ -104,11 +109,14 @@ def get_sources(env, is_editor_build):
             "editor/instance_library/*.cpp",
             "editor/mesh_sdf/*.cpp",
             "editor/graph/*.cpp",
+            "editor/blocky_library/*.cpp",
+            "editor/blocky_library/types/*.cpp",
 
             "util/godot/classes/editor_plugin.cpp",
             "util/godot/classes/editor_import_plugin.cpp",
             "util/godot/classes/editor_inspector_plugin.cpp",
             "util/godot/classes/editor_property.cpp",
+            "util/godot/classes/editor_settings.cpp",
             "util/godot/classes/graph_edit.cpp", # Not editor-only, but only used in editor for now
         ]
 

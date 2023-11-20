@@ -1,7 +1,7 @@
 // Generated file
 
 // clang-format off
-const char *g_dilate_normalmap_shader = 
+const char *g_dilate_normalmap_shader =
 "#version 450\n"
 "\n"
 "// Dilates a normalmap by filling \"empty\" pixels with the average of surrounding pixels.\n"
@@ -10,8 +10,10 @@ const char *g_dilate_normalmap_shader =
 "\n"
 "layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;\n"
 "\n"
+"// We must use alternating images because each iteration reads neighbor pixels\n"
 "layout (set = 0, binding = 0, rgba8ui) restrict readonly uniform uimage2D u_src_image;\n"
 "layout (set = 0, binding = 1, rgba8ui) restrict writeonly uniform uimage2D u_dst_image;\n"
+"\n"
 "layout (set = 0, binding = 2) uniform Params {\n"
 "	int u_tile_size;\n"
 "};\n"
@@ -67,6 +69,5 @@ const char *g_dilate_normalmap_shader =
 "	ivec4 col_avg = count == 0 ? col11 : col_sum / count;\n"
 "\n"
 "	imageStore(u_dst_image, pixel_pos, col_avg);\n"
-"}\n"
-"\n";
+"}\n";
 // clang-format on

@@ -1,4 +1,5 @@
 #include "voxel_graph_node_inspector_wrapper.h"
+#include "../../constants/voxel_string_names.h"
 #include "../../generators/graph/node_type_db.h"
 #include "../../util/godot/core/array.h"
 #include "../../util/godot/funcs.h"
@@ -224,8 +225,8 @@ bool VoxelGraphNodeInspectorWrapper::_set(const StringName &p_name, const Varian
 	}
 
 	if (name == AUTOCONNECT_PROPERTY_NAME) {
-		ur.create_action(String("Set ") + AUTOCONNECT_PROPERTY_NAME);
 		const bool prev_autoconnect = graph->get_node_default_inputs_autoconnect(_node_id);
+		ur.create_action(String("Set ") + AUTOCONNECT_PROPERTY_NAME);
 		ur.add_do_method(graph.ptr(), "set_node_default_inputs_autoconnect", _node_id, p_value);
 		ur.add_undo_method(graph.ptr(), "set_node_default_inputs_autoconnect", _node_id, prev_autoconnect);
 		// To update disabled default input values in the inspector

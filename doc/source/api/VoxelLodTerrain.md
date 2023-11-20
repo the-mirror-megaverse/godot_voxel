@@ -35,6 +35,7 @@ Type        | Name                                                              
 `bool`      | [normalmap_use_gpu](#i_normalmap_use_gpu)                                          | false                                                                                 
 `bool`      | [run_stream_in_editor](#i_run_stream_in_editor)                                    | true                                                                                  
 `bool`      | [threaded_update_enabled](#i_threaded_update_enabled)                              | false                                                                                 
+`bool`      | [use_gpu_generation](#i_use_gpu_generation)                                        | false                                                                                 
 `int`       | [view_distance](#i_view_distance)                                                  | 512                                                                                   
 `AABB`      | [voxel_bounds](#i_voxel_bounds)                                                    | AABB(-5.36871e+08, -5.36871e+08, -5.36871e+08, 1.07374e+09, 1.07374e+09, 1.07374e+09) 
 <p></p>
@@ -87,7 +88,8 @@ enum **DebugDrawFlag**:
 - **DEBUG_DRAW_EDIT_BOXES** = **3**
 - **DEBUG_DRAW_VOLUME_BOUNDS** = **4**
 - **DEBUG_DRAW_EDITED_BLOCKS** = **5**
-- **DEBUG_DRAW_FLAGS_COUNT** = **6**
+- **DEBUG_DRAW_MODIFIER_BOUNDS** = **6**
+- **DEBUG_DRAW_FLAGS_COUNT** = **7**
 
 
 ## Property Descriptions
@@ -171,6 +173,7 @@ This is the resolution at which normalmaps will begin with, at the LOD level def
 
 - [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html)<span id="i_normalmap_use_gpu"></span> **normalmap_use_gpu** = false
 
+Enables GPU detail normalmaps generation, which can speed it up. This is only valid for generators that support it. Vulkan is required.
 
 - [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html)<span id="i_run_stream_in_editor"></span> **run_stream_in_editor** = true
 
@@ -179,6 +182,10 @@ Sets wether the member generator and the member stream will run in the editor. T
 - [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html)<span id="i_threaded_update_enabled"></span> **threaded_update_enabled** = false
 
 When enabled, this node will run a large part of its update cycle in a separate thread. Otherwise, it will run on the main thread.
+
+- [bool](https://docs.godotengine.org/en/stable/classes/class_bool.html)<span id="i_use_gpu_generation"></span> **use_gpu_generation** = false
+
+Enables GPU block generation, which can speed it up. This is only valid for generators that support it. Vulkan is required.
 
 - [int](https://docs.godotengine.org/en/stable/classes/class_int.html)<span id="i_view_distance"></span> **view_distance** = 512
 
@@ -297,4 +304,4 @@ Converts a voxel position into a data block position for a specific LOD index.
 
 Converts a voxel position into a mesh block position for a specific LOD index.
 
-_Generated on Mar 26, 2023_
+_Generated on Jul 23, 2023_

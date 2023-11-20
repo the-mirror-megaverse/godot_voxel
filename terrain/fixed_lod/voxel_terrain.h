@@ -56,7 +56,7 @@ public:
 	void set_mesh_block_size(unsigned int p_block_size);
 
 	void post_edit_voxel(Vector3i pos);
-	void post_edit_area(Box3i box_in_voxels);
+	void post_edit_area(Box3i box_in_voxels, bool update_mesh);
 
 	void set_generate_collisions(bool enabled);
 	bool get_generate_collisions() const {
@@ -86,6 +86,9 @@ public:
 
 	void set_material_override(Ref<Material> material);
 	Ref<Material> get_material_override() const;
+
+	void set_generator_use_gpu(bool enabled);
+	bool get_generator_use_gpu() const;
 
 	VoxelData &get_storage() const {
 		ZN_ASSERT(_data != nullptr);
@@ -155,6 +158,10 @@ public:
 	void set_multiplayer_synchronizer(VoxelTerrainMultiplayerSynchronizer *synchronizer);
 	const VoxelTerrainMultiplayerSynchronizer *get_multiplayer_synchronizer() const;
 
+#ifdef TOOLS_ENABLED
+	void get_configuration_warnings(PackedStringArray &warnings) const override;
+#endif // TOOLS_ENABLED
+
 protected:
 	void _notification(int p_what);
 
@@ -199,9 +206,14 @@ private:
 	void emit_data_block_loaded(Vector3i bpos);
 	void emit_data_block_unloaded(Vector3i bpos);
 
+	void emit_mesh_block_entered(Vector3i bpos);
+	void emit_mesh_block_exited(Vector3i bpos);
+
 	bool try_get_paired_viewer_index(ViewerID id, size_t &out_i) const;
 
 	void notify_data_block_enter(const VoxelDataBlock &block, Vector3i bpos, ViewerID viewer_id);
+
+	bool is_area_meshed(const Box3i &box_in_voxels) const;
 
 #ifdef ZN_GODOT
 	// Called each time a data block enters a viewer's area.
@@ -230,6 +242,7 @@ private:
 	PackedInt32Array _b_get_viewer_network_peer_ids_in_area(Vector3i area_origin, Vector3i area_size) const;
 	void _b_rpc_receive_block(PackedByteArray data);
 	void _b_rpc_receive_area(PackedByteArray data);
+	bool _b_is_area_meshed(AABB aabb) const;
 
 	VolumeID _volume_id;
 
@@ -297,6 +310,7 @@ private:
 	bool _area_edit_notification_enabled = false;
 	// If enabled, VoxelViewers will cause blocks to automatically load around them.
 	bool _automatic_loading_enabled = true;
+	bool _generator_use_gpu = false;
 
 	Ref<Material> _material_override;
 

@@ -17,6 +17,9 @@ const char *VoxelGraphFunction::SIGNAL_NODE_NAME_CHANGED = "node_name_changed";
 void VoxelGraphFunction::clear() {
 	unregister_subresources();
 	_graph.clear();
+#ifdef TOOLS_ENABLED
+	_can_load_default_graph = false;
+#endif
 }
 
 ProgramGraph::Node *create_node_internal(ProgramGraph &graph, VoxelGraphFunction::NodeTypeID type_id, Vector2 position,
@@ -278,6 +281,7 @@ uint32_t VoxelGraphFunction::create_node(NodeTypeID type_id, Vector2 position, u
 	if (type_id == NODE_CUSTOM_OUTPUT) {
 		L::bind_custom_port(_outputs, *node);
 	}
+	emit_changed();
 	return node->id;
 }
 
@@ -291,6 +295,7 @@ uint32_t VoxelGraphFunction::create_function_node(Ref<VoxelGraphFunction> func, 
 	ProgramGraph::Node &node = _graph.get_node(id);
 	setup_function(node, func);
 	register_subresource(**func);
+	emit_changed();
 	return id;
 }
 
@@ -359,8 +364,8 @@ void VoxelGraphFunction::remove_connection(
 	emit_changed();
 }
 
-void VoxelGraphFunction::get_connections(std::vector<ProgramGraph::Connection> &connections) const {
-	_graph.get_connections(connections);
+void VoxelGraphFunction::get_connections(std::vector<ProgramGraph::Connection> &p_connections) const {
+	_graph.get_connections(p_connections);
 }
 
 bool VoxelGraphFunction::try_get_connection_to(
@@ -380,20 +385,21 @@ bool VoxelGraphFunction::has_node(uint32_t node_id) const {
 	return _graph.try_get_node(node_id) != nullptr;
 }
 
-void VoxelGraphFunction::set_node_name(uint32_t node_id, StringName name) {
+void VoxelGraphFunction::set_node_name(uint32_t node_id, StringName p_name) {
 	ProgramGraph::Node *node = _graph.try_get_node(node_id);
 	ERR_FAIL_COND_MSG(node == nullptr, "No node was found with the specified ID");
-	if (node->name == name) {
+	if (node->name == p_name) {
 		return;
 	}
-	if (name != StringName()) {
-		const uint32_t existing_node_id = _graph.find_node_by_name(name);
+	if (p_name != StringName()) {
+		const uint32_t existing_node_id = _graph.find_node_by_name(p_name);
 		if (existing_node_id != ProgramGraph::NULL_ID && node_id == existing_node_id) {
-			ZN_PRINT_ERROR(format("More than one graph node has the name \"{}\"", String(name)));
+			ZN_PRINT_ERROR(format("More than one graph node has the name \"{}\"", String(p_name)));
 		}
 	}
-	node->name = name;
+	node->name = p_name;
 	emit_signal(SIGNAL_NODE_NAME_CHANGED, node_id);
+	emit_changed();
 }
 
 StringName VoxelGraphFunction::get_node_name(uint32_t node_id) const {
@@ -402,8 +408,8 @@ StringName VoxelGraphFunction::get_node_name(uint32_t node_id) const {
 	return node->name;
 }
 
-uint32_t VoxelGraphFunction::find_node_by_name(StringName name) const {
-	return _graph.find_node_by_name(name);
+uint32_t VoxelGraphFunction::find_node_by_name(StringName p_name) const {
+	return _graph.find_node_by_name(p_name);
 }
 
 void VoxelGraphFunction::set_node_param(uint32_t node_id, uint32_t param_index, Variant value) {
@@ -477,17 +483,17 @@ inline bool has_duplicate(const PackedStringArray &sa) {
 	return find_duplicate(Span<const String>(sa.ptr(), sa.size())) != size_t(sa.size());
 }
 
-void VoxelGraphFunction::set_expression_node_inputs(uint32_t node_id, PackedStringArray names) {
+void VoxelGraphFunction::set_expression_node_inputs(uint32_t node_id, PackedStringArray input_names) {
 	ProgramGraph::Node *node = _graph.try_get_node(node_id);
 
 	// Validate
 	ERR_FAIL_COND(node == nullptr);
 	ERR_FAIL_COND(node->type_id != NODE_EXPRESSION);
-	for (int i = 0; i < names.size(); ++i) {
-		const String name = names[i];
-		ERR_FAIL_COND(!name.is_valid_identifier());
+	for (int i = 0; i < input_names.size(); ++i) {
+		const String input_name = input_names[i];
+		ERR_FAIL_COND(!input_name.is_valid_identifier());
 	}
-	ERR_FAIL_COND(has_duplicate(names));
+	ERR_FAIL_COND(has_duplicate(input_names));
 	for (unsigned int i = 0; i < node->inputs.size(); ++i) {
 		const ProgramGraph::Port &port = node->inputs[i];
 		// Sounds annoying if you call this from a script, but this is supposed to be editor functionality for now
@@ -495,11 +501,11 @@ void VoxelGraphFunction::set_expression_node_inputs(uint32_t node_id, PackedStri
 				ZN_TTR("Cannot change input ports if connections exist, disconnect them first."));
 	}
 
-	node->inputs.resize(names.size());
-	node->default_inputs.resize(names.size());
-	for (int i = 0; i < names.size(); ++i) {
-		const String name = names[i];
-		const CharString name_utf8 = name.utf8();
+	node->inputs.resize(input_names.size());
+	node->default_inputs.resize(input_names.size());
+	for (int i = 0; i < input_names.size(); ++i) {
+		const String input_name = input_names[i];
+		const CharString name_utf8 = input_name.utf8();
 		node->inputs[i].dynamic_name = name_utf8.get_data();
 	}
 }
@@ -556,6 +562,9 @@ void VoxelGraphFunction::set_node_gui_position(uint32_t node_id, Vector2 pos) {
 	ERR_FAIL_COND(node == nullptr);
 	if (node->gui_position != pos) {
 		node->gui_position = pos;
+		// Note that this is not a meaningful change, but emitting anyways, because it might be used to know if the
+		// graph needs to be saved...
+		emit_changed();
 	}
 }
 
@@ -570,6 +579,9 @@ void VoxelGraphFunction::set_node_gui_size(uint32_t node_id, Vector2 size) {
 	ERR_FAIL_COND(node == nullptr);
 	if (node->gui_size != size) {
 		node->gui_size = size;
+		// Note that this is not a meaningful change, but emitting anyways, because it might be used to know if the
+		// graph needs to be saved...
+		emit_changed();
 	}
 }
 
@@ -843,7 +855,7 @@ static bool var_to_id(Variant v, uint32_t &out_id, uint32_t min = 0) {
 	return true;
 }
 
-static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data) {
+static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data, String resource_path) {
 	Dictionary nodes_data = data["nodes"];
 	Array connections_data = data["connections"];
 	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
@@ -880,9 +892,14 @@ static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data) {
 			const String func_key = ntype.params[0].name;
 			Ref<VoxelGraphFunction> function = node_data[func_key];
 			if (function.is_null()) {
-				ERR_PRINT(String("Unable to load external function referenced in {0}")
-								  .format(varray(VoxelGraphFunction::get_class_static())));
-				continue;
+				ERR_PRINT(String("Unable to load external function referenced in {0} {}")
+								  .format(varray(VoxelGraphFunction::get_class_static(), resource_path)));
+				// continue;
+				// Cancel, connections to that node cause crashes if we carry on loading. Perhaps we could try using a
+				// placeholder in the future so the graph can still be opened?
+				// We should also report the missing dependencies in the editor somehow, because Godot doesn't do it for
+				// us if the resource is opened in some cases
+				return false;
 			}
 			setup_function(*node, function);
 			// TODO Create a placeholder node in case a function isn't found to avoid loss of data?
@@ -970,7 +987,7 @@ static bool load_graph_from_variant_data(ProgramGraph &graph, Dictionary data) {
 bool VoxelGraphFunction::load_graph_from_variant_data(Dictionary data) {
 	clear();
 
-	if (zylann::voxel::pg::load_graph_from_variant_data(_graph, data)) {
+	if (zylann::voxel::pg::load_graph_from_variant_data(_graph, data, get_path())) {
 		register_subresources();
 		return true;
 
@@ -1141,6 +1158,7 @@ void VoxelGraphFunction::set_io_definitions(Span<const Port> inputs, Span<const 
 #ifdef TOOLS_ENABLED
 	notify_property_list_changed();
 #endif
+	emit_changed();
 }
 
 bool VoxelGraphFunction::contains_reference_to_function(Ref<VoxelGraphFunction> p_func, int max_recursion) const {
@@ -1188,37 +1206,37 @@ bool find_port_by_name(Span<const VoxelGraphFunction::Port> ports, const String 
 }
 
 bool VoxelGraphFunction::get_node_input_index_by_name(
-		uint32_t node_id, String name, unsigned int &out_input_index) const {
+		uint32_t node_id, String input_name, unsigned int &out_input_index) const {
 	const ProgramGraph::Node &node = _graph.get_node(node_id);
 
 	if (node.type_id == VoxelGraphFunction::NODE_FUNCTION) {
 		ZN_ASSERT(node.params.size() >= 1);
 		Ref<VoxelGraphFunction> func = node.params[0];
 		if (func.is_valid()) {
-			return find_port_by_name(func->get_input_definitions(), name, out_input_index);
+			return find_port_by_name(func->get_input_definitions(), input_name, out_input_index);
 		}
 
 	} else {
 		for (unsigned int i = 0; i < node.inputs.size(); ++i) {
 			const std::string &dynamic_name = node.inputs[i].dynamic_name;
-			if (!dynamic_name.empty() && to_godot(dynamic_name) == name) {
+			if (!dynamic_name.empty() && to_godot(dynamic_name) == input_name) {
 				out_input_index = i;
 				return true;
 			}
 		}
 
 		const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
-		return type_db.try_get_input_index_from_name(node.type_id, name, out_input_index);
+		return type_db.try_get_input_index_from_name(node.type_id, input_name, out_input_index);
 	}
 
 	return false;
 }
 
 bool VoxelGraphFunction::get_node_param_index_by_name(
-		uint32_t node_id, String name, unsigned int &out_param_index) const {
+		uint32_t node_id, String param_name, unsigned int &out_param_index) const {
 	const ProgramGraph::Node &node = _graph.get_node(node_id);
 	const NodeTypeDB &type_db = NodeTypeDB::get_singleton();
-	return type_db.try_get_param_index_from_name(node.type_id, name, out_param_index);
+	return type_db.try_get_param_index_from_name(node.type_id, param_name, out_param_index);
 }
 
 void VoxelGraphFunction::update_function_nodes(std::vector<ProgramGraph::Connection> *removed_connections) {
@@ -1264,8 +1282,8 @@ void VoxelGraphFunction::_b_set_node_param_null(int node_id, int param_index) {
 	set_node_param(node_id, param_index, Variant());
 }
 
-void VoxelGraphFunction::_b_set_node_name(int node_id, String name) {
-	set_node_name(node_id, name);
+void VoxelGraphFunction::_b_set_node_name(int node_id, String node_name) {
+	set_node_name(node_id, node_name);
 }
 
 PackedInt32Array to_godot_int32_array(const std::vector<uint32_t> &vec) {
@@ -1367,8 +1385,8 @@ void VoxelGraphFunction::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear"), &VoxelGraphFunction::clear);
 	ClassDB::bind_method(D_METHOD("create_node", "type_id", "position", "id"), &VoxelGraphFunction::create_node,
 			DEFVAL(ProgramGraph::NULL_ID));
-	ClassDB::bind_method(D_METHOD("create_function_node", "position", "id"), &VoxelGraphFunction::create_function_node,
-			DEFVAL(ProgramGraph::NULL_ID));
+	ClassDB::bind_method(D_METHOD("create_function_node", "function", "position", "id"),
+			&VoxelGraphFunction::create_function_node, DEFVAL(ProgramGraph::NULL_ID));
 	ClassDB::bind_method(D_METHOD("remove_node", "node_id"), &VoxelGraphFunction::remove_node);
 	ClassDB::bind_method(D_METHOD("can_connect", "src_node_id", "src_port_index", "dst_node_id", "dst_port_index"),
 			&VoxelGraphFunction::can_connect);

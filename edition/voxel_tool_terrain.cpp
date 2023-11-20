@@ -57,7 +57,7 @@ Ref<VoxelRaycastResult> VoxelToolTerrain::raycast(
 
 	struct RaycastPredicateBlocky {
 		const VoxelData &data;
-		const VoxelBlockyLibrary &library;
+		const VoxelBlockyLibraryBase::BakedData &baked_data;
 		const uint32_t collision_mask;
 
 		bool operator()(const VoxelRaycastState &rs) const {
@@ -65,24 +65,24 @@ Ref<VoxelRaycastResult> VoxelToolTerrain::raycast(
 			defval.i = 0;
 			const int v = data.get_voxel(rs.hit_position, VoxelBufferInternal::CHANNEL_TYPE, defval).i;
 
-			if (library.has_voxel(v) == false) {
+			if (baked_data.has_model(v) == false) {
 				return false;
 			}
 
-			const VoxelBlockyModel &voxel = library.get_voxel_const(v);
-			if (voxel.is_empty()) {
+			const VoxelBlockyModel::BakedData &model = baked_data.models[v];
+			if (model.empty) {
 				return false;
 			}
 
-			if ((voxel.get_collision_mask() & collision_mask) == 0) {
+			if ((model.box_collision_mask & collision_mask) == 0) {
 				return false;
 			}
 
-			if (voxel.is_transparent() == false) {
+			if (model.transparency_index == 0) {
 				return true;
 			}
 
-			if (voxel.is_transparent() && voxel.get_collision_aabbs().empty() == false) {
+			if (model.transparency_index > 0 && model.box_collision_aabbs.size() > 0) {
 				return true;
 			}
 
@@ -106,11 +106,11 @@ Ref<VoxelRaycastResult> VoxelToolTerrain::raycast(
 	const float max_distance = p_max_distance / to_world_scale;
 
 	if (try_get_as(_terrain->get_mesher(), mesher_blocky)) {
-		Ref<VoxelBlockyLibrary> library_ref = mesher_blocky->get_library();
+		Ref<VoxelBlockyLibraryBase> library_ref = mesher_blocky->get_library();
 		if (library_ref.is_null()) {
 			return res;
 		}
-		RaycastPredicateBlocky predicate{ _terrain->get_storage(), **library_ref, p_collision_mask };
+		RaycastPredicateBlocky predicate{ _terrain->get_storage(), library_ref->get_baked_data(), p_collision_mask };
 		float hit_distance;
 		float hit_distance_prev;
 		if (zylann::voxel_raycast(local_pos, local_dir, predicate, max_distance, hit_pos, prev_pos, hit_distance,
@@ -295,13 +295,14 @@ void VoxelToolTerrain::_set_voxel_f(Vector3i pos, float v) {
 
 void VoxelToolTerrain::_post_edit(const Box3i &box) {
 	ERR_FAIL_COND(_terrain == nullptr);
-	_terrain->post_edit_area(box);
+	_terrain->post_edit_area(box, true);
 }
 
 void VoxelToolTerrain::set_voxel_metadata(Vector3i pos, Variant meta) {
 	ERR_FAIL_COND(_terrain == nullptr);
 	VoxelData &data = _terrain->get_storage();
 	data.set_voxel_metadata(pos, meta);
+	_terrain->post_edit_area(Box3i(pos, Vector3i(1, 1, 1)), false);
 }
 
 Variant VoxelToolTerrain::get_voxel_metadata(Vector3i pos) const {
@@ -310,8 +311,8 @@ Variant VoxelToolTerrain::get_voxel_metadata(Vector3i pos) const {
 	return data.get_voxel_metadata(pos);
 }
 
-void VoxelToolTerrain::run_blocky_random_tick_static(VoxelData &data, Box3i voxel_box, const VoxelBlockyLibrary &lib,
-		RandomPCG &random, int voxel_count, int batch_count, void *callback_data,
+void VoxelToolTerrain::run_blocky_random_tick_static(VoxelData &data, Box3i voxel_box,
+		const VoxelBlockyLibraryBase &lib, RandomPCG &random, int voxel_count, int batch_count, void *callback_data,
 		bool (*callback)(void *, Vector3i, int64_t)) {
 	ERR_FAIL_COND(batch_count <= 0);
 	ERR_FAIL_COND(voxel_count < 0);
@@ -347,25 +348,31 @@ void VoxelToolTerrain::run_blocky_random_tick_static(VoxelData &data, Box3i voxe
 		}
 	};
 
+	const VoxelBlockyLibraryBase::BakedData &lib_data = lib.get_baked_data();
+
 	// Choose blocks at random
 	for (int bi = 0; bi < block_count; ++bi) {
 		const Vector3i block_pos = block_box.pos + L::urand_vec3i(random, block_box.size);
 
 		const Vector3i block_origin = data.block_to_voxel(block_pos);
 
-		std::shared_ptr<VoxelBufferInternal> voxels_ptr = data.try_get_block_voxels(block_pos);
+		picks.clear();
 
-		if (voxels_ptr != nullptr) {
-			// Doing ONLY reads here.
-			{
-				RWLockRead lock(voxels_ptr->get_lock());
+		{
+			VoxelSpatialLock &spatial_lock = data.get_spatial_lock(0);
+			VoxelSpatialLockRead srlock(spatial_lock, BoxBounds3i::from_position(block_pos));
+
+			std::shared_ptr<VoxelBufferInternal> voxels_ptr = data.try_get_block_voxels(block_pos);
+
+			if (voxels_ptr != nullptr) {
+				// Doing ONLY reads here.
 				const VoxelBufferInternal &voxels = *voxels_ptr;
 
 				if (voxels.get_channel_compression(channel) == VoxelBufferInternal::COMPRESSION_UNIFORM) {
 					const uint64_t v = voxels.get_voxel(0, 0, 0, channel);
-					if (lib.has_voxel(v)) {
-						const VoxelBlockyModel &vt = lib.get_voxel_const(v);
-						if (!vt.is_random_tickable()) {
+					if (lib_data.has_model(v)) {
+						const VoxelBlockyModel::BakedData &vt = lib_data.models[v];
+						if (vt.is_random_tickable) {
 							// Skip whole block
 							continue;
 						}
@@ -380,7 +387,6 @@ void VoxelToolTerrain::run_blocky_random_tick_static(VoxelData &data, Box3i voxe
 
 				// Choose a bunch of voxels at random within the block.
 				// Batching this way improves performance a little by reducing block lookups.
-				picks.clear();
 				for (int vi = 0; vi < local_batch_count; ++vi) {
 					const Vector3i rpos = local_voxel_box.pos + L::urand_vec3i(random, local_voxel_box.size);
 
@@ -388,31 +394,31 @@ void VoxelToolTerrain::run_blocky_random_tick_static(VoxelData &data, Box3i voxe
 					picks.push_back(Pick{ v, rpos });
 				}
 			}
+		}
 
-			// The following may or may not read AND write voxels randomly due to its exposition to scripts.
-			// However, we don't send the buffer directly, so it will go through an API taking care of locking.
-			// So we don't (and shouldn't) lock anything here.
-			for (size_t i = 0; i < picks.size(); ++i) {
-				const Pick pick = picks[i];
+		// The following may or may not read AND write voxels randomly due to its exposition to scripts.
+		// However, we don't send the buffer directly, so it will go through an API taking care of locking.
+		// So we don't (and shouldn't) lock anything here.
+		for (size_t i = 0; i < picks.size(); ++i) {
+			const Pick pick = picks[i];
 
-				if (lib.has_voxel(pick.value)) {
-					const VoxelBlockyModel &vt = lib.get_voxel_const(pick.value);
+			if (lib_data.has_model(pick.value)) {
+				const VoxelBlockyModel::BakedData &vt = lib_data.models[pick.value];
 
-					if (vt.is_random_tickable()) {
-						ERR_FAIL_COND(!callback(callback_data, pick.rpos + block_origin, pick.value));
-					}
+				if (vt.is_random_tickable) {
+					ERR_FAIL_COND(!callback(callback_data, pick.rpos + block_origin, pick.value));
 				}
 			}
 		}
 	}
 }
 
-static Ref<VoxelBlockyLibrary> get_voxel_library(const VoxelTerrain &terrain) {
+static Ref<VoxelBlockyLibraryBase> get_voxel_library(const VoxelTerrain &terrain) {
 	Ref<VoxelMesherBlocky> blocky_mesher = terrain.get_mesher();
 	if (blocky_mesher.is_valid()) {
 		return blocky_mesher->get_library();
 	}
-	return Ref<VoxelBlockyLibrary>();
+	return Ref<VoxelBlockyLibraryBase>();
 }
 
 // TODO This function snaps the given AABB to blocks, this is not intuitive. Should figure out a way to respect the
@@ -424,7 +430,8 @@ void VoxelToolTerrain::run_blocky_random_tick(
 
 	ERR_FAIL_COND(_terrain == nullptr);
 	ERR_FAIL_COND_MSG(get_voxel_library(*_terrain).is_null(),
-			String("This function requires a volume using {0}").format(varray(VoxelMesherBlocky::get_class_static())));
+			String("This function requires a volume using {0} with a valid library")
+					.format(varray(VoxelMesherBlocky::get_class_static())));
 	ERR_FAIL_COND(callback.is_null());
 	ERR_FAIL_COND(batch_count <= 0);
 	ERR_FAIL_COND(voxel_count < 0);
@@ -439,7 +446,7 @@ void VoxelToolTerrain::run_blocky_random_tick(
 	};
 	CallbackData cb_self{ callback };
 
-	const VoxelBlockyLibrary &lib = **get_voxel_library(*_terrain);
+	const VoxelBlockyLibraryBase &lib = **get_voxel_library(*_terrain);
 	VoxelData &data = _terrain->get_storage();
 	const Box3i voxel_box(math::floor_to_int(voxel_area.position), math::floor_to_int(voxel_area.size));
 

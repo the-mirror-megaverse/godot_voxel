@@ -6,10 +6,12 @@
 #include "../../terrain/variable_lod/voxel_lod_terrain.h"
 #include "../../util/godot/classes/camera_3d.h"
 #include "../../util/godot/classes/editor_interface.h"
+#include "../../util/godot/classes/editor_settings.h"
 #include "../../util/godot/classes/menu_button.h"
 #include "../../util/godot/classes/node.h"
 #include "../../util/godot/classes/popup_menu.h"
 #include "../../util/godot/core/callable.h"
+#include "../../util/godot/core/keyboard.h"
 #include "../../util/godot/funcs.h"
 #include "../about_window.h"
 #include "../graph/voxel_graph_node_inspector_wrapper.h"
@@ -17,7 +19,11 @@
 
 namespace zylann::voxel {
 
-VoxelTerrainEditorPlugin::VoxelTerrainEditorPlugin() {
+VoxelTerrainEditorPlugin::VoxelTerrainEditorPlugin() {}
+
+// TODO GDX: Can't initialize EditorPlugins in their constructor when they access EditorNode.
+// See https://github.com/godotengine/godot-cpp/issues/1179
+void VoxelTerrainEditorPlugin::init() {
 	MenuButton *menu_button = memnew(MenuButton);
 	menu_button->set_text(ZN_TTR("Terrain"));
 	menu_button->get_popup()->connect(
@@ -40,7 +46,10 @@ void VoxelTerrainEditorPlugin::generate_menu_items(MenuButton *menu_button, bool
 	PopupMenu *popup = menu_button->get_popup();
 	popup->clear();
 
-	popup->add_item(ZN_TTR("Re-generate"), MENU_RESTART_STREAM);
+	popup->add_shortcut(get_or_create_editor_shortcut("voxel/regenerate_terrain", ZN_TTR("Re-generate"),
+								godot::KEY_MASK_CMD_OR_CTRL | godot::KEY_R),
+			MENU_RESTART_STREAM);
+
 	popup->add_item(ZN_TTR("Re-mesh"), MENU_REMESH);
 	popup->add_separator();
 	{
@@ -69,6 +78,12 @@ void VoxelTerrainEditorPlugin::generate_menu_items(MenuButton *menu_button, bool
 			popup->set_item_as_checkable(i, true);
 			popup->set_item_checked(i, _show_mesh_updates);
 		}
+		{
+			popup->add_item(ZN_TTR("Show modifier bounds"), MENU_SHOW_MODIFIER_BOUNDS);
+			const int i = popup->get_item_index(MENU_SHOW_MODIFIER_BOUNDS);
+			popup->set_item_as_checkable(i, true);
+			popup->set_item_checked(i, _show_modifier_bounds);
+		}
 	}
 	popup->add_separator();
 	popup->add_item(ZN_TTR("About Voxel Tools..."), MENU_ABOUT);
@@ -77,6 +92,8 @@ void VoxelTerrainEditorPlugin::generate_menu_items(MenuButton *menu_button, bool
 void VoxelTerrainEditorPlugin::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE:
+			init();
+
 			_editor_viewer_id = VoxelEngine::get_singleton().add_viewer();
 			VoxelEngine::get_singleton().set_viewer_distance(_editor_viewer_id, 512);
 			// No collision needed in editor, also it updates faster without
@@ -149,11 +166,11 @@ void VoxelTerrainEditorPlugin::set_node(VoxelNode *node) {
 		// Also moving the node around in the tree triggers exit/enter so have to listen for both.
 		_node->disconnect(
 				"tree_entered", ZN_GODOT_CALLABLE_MP(this, VoxelTerrainEditorPlugin, _on_terrain_tree_entered));
-		_node->disconnect("tree_exited", ZN_GODOT_CALLABLE_MP(this, VoxelTerrainEditorPlugin, _on_terrain_tree_exited));
 #else
 // TODO GDX: Callable::bind() isn't implemented, can't use this signal
 // See https://github.com/godotengine/godot-cpp/issues/802
 #endif
+		_node->disconnect("tree_exited", ZN_GODOT_CALLABLE_MP(this, VoxelTerrainEditorPlugin, _on_terrain_tree_exited));
 
 		VoxelLodTerrain *vlt = Object::cast_to<VoxelLodTerrain>(_node);
 		if (vlt != nullptr) {
@@ -167,12 +184,15 @@ void VoxelTerrainEditorPlugin::set_node(VoxelNode *node) {
 #ifdef ZN_GODOT
 		_node->connect("tree_entered",
 				ZN_GODOT_CALLABLE_MP(this, VoxelTerrainEditorPlugin, _on_terrain_tree_entered).bind(_node));
-		_node->connect("tree_exited",
-				ZN_GODOT_CALLABLE_MP(this, VoxelTerrainEditorPlugin, _on_terrain_tree_exited).bind(_node));
 #else
 // TODO GDX: Callable::bind() isn't implemented, can't use this signal
 // See https://github.com/godotengine/godot-cpp/issues/802
+// That means we can't take back the reference to the terrain if we reparented it, or switched between scene tabs, and
+// will cause errors. The user has to deselect the node and reselect it...
 #endif
+		// The real reason we use this signal is to invalidate the pointer when the object is destroyed.
+		// TODO Perhaps we should use an ObjectID instead?
+		_node->connect("tree_exited", ZN_GODOT_CALLABLE_MP(this, VoxelTerrainEditorPlugin, _on_terrain_tree_exited));
 
 		VoxelLodTerrain *vlt = Object::cast_to<VoxelLodTerrain>(_node);
 
@@ -184,6 +204,7 @@ void VoxelTerrainEditorPlugin::set_node(VoxelNode *node) {
 			vlt->debug_set_draw_flag(VoxelLodTerrain::DEBUG_DRAW_OCTREE_NODES, _show_octree_nodes);
 			vlt->debug_set_draw_flag(VoxelLodTerrain::DEBUG_DRAW_OCTREE_BOUNDS, _show_octree_bounds);
 			vlt->debug_set_draw_flag(VoxelLodTerrain::DEBUG_DRAW_MESH_UPDATES, _show_mesh_updates);
+			vlt->debug_set_draw_flag(VoxelLodTerrain::DEBUG_DRAW_MODIFIER_BOUNDS, _show_modifier_bounds);
 		}
 	}
 }
@@ -274,6 +295,16 @@ void VoxelTerrainEditorPlugin::_on_menu_item_selected(int id) {
 			_menu_button->get_popup()->set_item_checked(i, _show_mesh_updates);
 		} break;
 
+		case MENU_SHOW_MODIFIER_BOUNDS: {
+			VoxelLodTerrain *lod_terrain = Object::cast_to<VoxelLodTerrain>(_node);
+			ERR_FAIL_COND(lod_terrain == nullptr);
+			_show_modifier_bounds = !_show_modifier_bounds;
+			lod_terrain->debug_set_draw_flag(VoxelLodTerrain::DEBUG_DRAW_MODIFIER_BOUNDS, _show_modifier_bounds);
+
+			const int i = _menu_button->get_popup()->get_item_index(MENU_SHOW_MODIFIER_BOUNDS);
+			_menu_button->get_popup()->set_item_checked(i, _show_modifier_bounds);
+		} break;
+
 		case MENU_ABOUT:
 			_about_window->popup_centered_ratio(0.6);
 			break;
@@ -291,9 +322,9 @@ void VoxelTerrainEditorPlugin::_on_terrain_tree_entered(Object *node_o) {
 }
 
 #if defined(ZN_GODOT)
-void VoxelTerrainEditorPlugin::_on_terrain_tree_exited(Node *node) {
+void VoxelTerrainEditorPlugin::_on_terrain_tree_exited() {
 #elif defined(ZN_GODOT_EXTENSION)
-void VoxelTerrainEditorPlugin::_on_terrain_tree_exited(Object *node_o) {
+void VoxelTerrainEditorPlugin::_on_terrain_tree_exited() {
 #endif
 	// If the node exited the tree because it was deleted, signals we connected should automatically disconnect.
 	_node = nullptr;
@@ -304,8 +335,7 @@ void VoxelTerrainEditorPlugin::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_menu_item_selected", "id"), &VoxelTerrainEditorPlugin::_on_menu_item_selected);
 	ClassDB::bind_method(
 			D_METHOD("_on_terrain_tree_entered", "node"), &VoxelTerrainEditorPlugin::_on_terrain_tree_entered);
-	ClassDB::bind_method(
-			D_METHOD("_on_terrain_tree_exited", "node"), &VoxelTerrainEditorPlugin::_on_terrain_tree_exited);
+	ClassDB::bind_method(D_METHOD("_on_terrain_tree_exited"), &VoxelTerrainEditorPlugin::_on_terrain_tree_exited);
 #endif
 }
 
