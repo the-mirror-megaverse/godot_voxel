@@ -2,7 +2,7 @@
 #define VOXEL_BLOCKY_MODEL_H
 
 #include "../../constants/cube_tables.h"
-#include "../../util/fixed_array.h"
+#include "../../util/containers/fixed_array.h"
 #include "../../util/godot/classes/material.h"
 #include "../../util/godot/classes/mesh.h"
 #include "../../util/macros.h"
@@ -89,6 +89,7 @@ public:
 		Model model;
 		Color color;
 		uint8_t transparency_index;
+		bool culls_neighbors;
 		bool contributes_to_ao;
 		bool empty;
 		bool is_random_tickable;
@@ -137,6 +138,11 @@ public:
 	void set_transparency_index(int i);
 	int get_transparency_index() const {
 		return _transparency_index;
+	}
+
+	void set_culls_neighbors(bool cn);
+	bool get_culls_neighbors() const {
+		return _culls_neighbors;
 	}
 
 	void set_collision_mask(uint32_t mask);
@@ -241,6 +247,9 @@ private:
 	// If two neighboring voxels are supposed to occlude their shared face,
 	// this index decides wether or not it should happen. Equal indexes culls the face, different indexes doesn't.
 	uint8_t _transparency_index = 0;
+	// If enabled, this voxel culls the faces of its neighbors. Disabling
+	// can be useful for denser transparent voxels, such as foliage.
+	bool _culls_neighbors = true;
 	bool _random_tickable = false;
 
 	Color _color;

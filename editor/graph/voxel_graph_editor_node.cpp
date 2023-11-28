@@ -8,7 +8,6 @@
 #include "../../util/godot/core/array.h"
 #include "../../util/godot/core/callable.h"
 #include "../../util/godot/editor_scale.h"
-#include "../../util/godot/funcs.h"
 #include "voxel_graph_editor_node_preview.h"
 
 namespace zylann::voxel {
@@ -26,8 +25,8 @@ VoxelGraphEditorNode *VoxelGraphEditorNode::create(const VoxelGraphFunction &gra
 	node_view->_node_id = node_id;
 
 	const uint32_t node_type_id = graph.get_node_type_id(node_id);
-	const bool is_resizable =
-			node_type_id == VoxelGraphFunction::NODE_EXPRESSION || node_type_id == VoxelGraphFunction::NODE_COMMENT;
+	const bool is_comment = node_type_id == VoxelGraphFunction::NODE_COMMENT;
+	const bool is_resizable = node_type_id == VoxelGraphFunction::NODE_EXPRESSION || is_comment;
 
 	node_view->_is_relay = node_type_id == VoxelGraphFunction::NODE_RELAY;
 
@@ -41,9 +40,15 @@ VoxelGraphEditorNode *VoxelGraphEditorNode::create(const VoxelGraphFunction &gra
 	}
 	// node_view.rect_size = Vector2(200, 100)
 
-	if (node_type_id == VoxelGraphFunction::NODE_COMMENT) {
+	node_view->_is_comment = is_comment;
+
+#if GODOT_VERSION_MAJOR == 4 && GODOT_VERSION_MINOR <= 1
+	if (is_comment) {
 		node_view->set_comment(true);
 	}
+#else
+	// TODO GraphEdit is under refactoring in Godot 4.2, comments are not available anymore
+#endif
 
 	node_view->update_layout(graph);
 
@@ -175,7 +180,7 @@ void VoxelGraphEditorNode::update_layout(const VoxelGraphFunction &graph) {
 		add_child(_preview);
 	}
 
-	if (is_comment()) {
+	if (_is_comment) {
 		_comment_label = memnew(Label);
 		add_child(_comment_label);
 		_comment_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
@@ -353,10 +358,9 @@ void VoxelGraphEditorNode::_notification(int p_what) {
 			const float width = Math::floor(2.f * get_theme_default_base_scale());
 			// Can't directly use inputs and output positions... Godot pre-scales them, which makes them unusable
 			// for drawing because the node is already scaled
-			const Vector2 scale = get_global_transform().get_scale();
-			const Vector2 input_pos = get_connection_input_position(0) / scale;
-			const Vector2 output_pos = get_connection_output_position(0) / scale;
-			draw_line(input_pos, output_pos, get_connection_input_color(0), width, true);
+			const Vector2 input_pos = get_graph_node_input_port_position(*this, 0);
+			const Vector2 output_pos = get_graph_node_output_port_position(*this, 0);
+			draw_line(input_pos, output_pos, get_graph_node_input_port_color(*this, 0), width, true);
 		}
 		if (_profiling_ratio_enabled) {
 			const float bgh = EDSCALE * 4.f;

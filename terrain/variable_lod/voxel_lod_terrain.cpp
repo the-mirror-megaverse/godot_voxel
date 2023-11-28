@@ -1,14 +1,14 @@
 #include "voxel_lod_terrain.h"
 #include "../../constants/voxel_string_names.h"
 #include "../../edition/voxel_tool_lod_terrain.h"
-#include "../../engine/detail_rendering.h"
-#include "../../engine/load_all_blocks_data_task.h"
+#include "../../engine/detail_rendering/detail_rendering.h"
 #include "../../engine/voxel_engine_gd.h"
 #include "../../engine/voxel_engine_updater.h"
 #include "../../meshers/blocky/voxel_mesher_blocky.h"
 #include "../../meshers/transvoxel/voxel_mesher_transvoxel.h"
 #include "../../storage/voxel_buffer_gd.h"
-#include "../../util/container_funcs.h"
+#include "../../streams/load_all_blocks_data_task.h"
+#include "../../util/containers/container_funcs.h"
 #include "../../util/godot/classes/base_material_3d.h" // For property hint in release mode in GDExtension...
 #include "../../util/godot/classes/camera_3d.h"
 #include "../../util/godot/classes/concave_polygon_shape_3d.h"
@@ -22,8 +22,6 @@
 #include "../../util/godot/classes/viewport.h"
 #include "../../util/godot/core/array.h"
 #include "../../util/godot/core/string.h"
-#include "../../util/godot/funcs.h"
-#include "../../util/log.h"
 #include "../../util/math/color.h"
 #include "../../util/math/conv.h"
 #include "../../util/profiling.h"
@@ -340,10 +338,10 @@ Ref<VoxelGenerator> VoxelLodTerrain::get_generator() const {
 }
 
 void VoxelLodTerrain::_on_gi_mode_changed() {
-	const GIMode gi_mode = get_gi_mode();
+	const GeometryInstance3D::GIMode gi_mode = get_gi_mode();
 	for (unsigned int lod_index = 0; lod_index < _update_data->state.lods.size(); ++lod_index) {
 		_mesh_maps_per_lod[lod_index].for_each_block([gi_mode](VoxelMeshBlockVLT &block) { //
-			block.set_gi_mode(DirectMeshInstance::GIMode(gi_mode));
+			block.set_gi_mode(gi_mode);
 		});
 	}
 }
@@ -353,6 +351,15 @@ void VoxelLodTerrain::_on_shadow_casting_changed() {
 	for (unsigned int lod_index = 0; lod_index < _update_data->state.lods.size(); ++lod_index) {
 		_mesh_maps_per_lod[lod_index].for_each_block([mode](VoxelMeshBlockVLT &block) { //
 			block.set_shadow_casting(mode);
+		});
+	}
+}
+
+void VoxelLodTerrain::_on_render_layers_mask_changed() {
+	const int mask = get_render_layers_mask();
+	for (unsigned int lod_index = 0; lod_index < _update_data->state.lods.size(); ++lod_index) {
+		_mesh_maps_per_lod[lod_index].for_each_block([mask](VoxelMeshBlockVLT &block) { //
+			block.set_render_layers_mask(mask);
 		});
 	}
 }
@@ -1153,7 +1160,7 @@ void VoxelLodTerrain::process(float delta) {
 			VoxelEngine::get_singleton().push_async_task(task);
 
 		} else {
-			ThreadedTaskContext ctx{ 0, ThreadedTaskContext::STATUS_COMPLETE };
+			ThreadedTaskContext ctx{ 0, ThreadedTaskContext::STATUS_COMPLETE, TaskPriority() };
 			task->run(ctx);
 			memdelete(task);
 			apply_main_thread_update_tasks();
@@ -1297,7 +1304,7 @@ void VoxelLodTerrain::apply_main_thread_update_tasks() {
 
 						item.mesh_instance.create();
 						item.mesh_instance.set_mesh(block->get_mesh());
-						item.mesh_instance.set_gi_mode(DirectMeshInstance::GIMode(get_gi_mode()));
+						item.mesh_instance.set_gi_mode(get_gi_mode());
 						item.mesh_instance.set_transform(volume_transform * Transform3D(Basis(), item.local_position));
 						item.mesh_instance.set_material_override(item.shader_material);
 						item.mesh_instance.set_world(*get_world_3d());
@@ -1570,8 +1577,8 @@ void VoxelLodTerrain::apply_mesh_update(VoxelEngine::BlockMeshOutput &ob) {
 		block->set_transition_mask(transition_mask);
 	}
 
-	block->set_mesh(mesh, DirectMeshInstance::GIMode(get_gi_mode()),
-			RenderingServer::ShadowCastingSetting(get_shadow_casting()));
+	block->set_mesh(
+			mesh, get_gi_mode(), RenderingServer::ShadowCastingSetting(get_shadow_casting()), get_render_layers_mask());
 
 	if (!ob.has_mesh_resource) {
 		// Profiling has shown Godot takes as much time to build a transition mesh as the main mesh of a block, so
@@ -1585,8 +1592,8 @@ void VoxelLodTerrain::apply_mesh_update(VoxelEngine::BlockMeshOutput &ob) {
 			Ref<ArrayMesh> transition_mesh = build_mesh(to_span(mesh_data.transition_surfaces[dir]),
 					mesh_data.primitive_type, mesh_data.mesh_flags, _material);
 
-			block->set_transition_mesh(transition_mesh, dir, DirectMeshInstance::GIMode(get_gi_mode()),
-					RenderingServer::ShadowCastingSetting(get_shadow_casting()));
+			block->set_transition_mesh(transition_mesh, dir, get_gi_mode(),
+					RenderingServer::ShadowCastingSetting(get_shadow_casting()), get_render_layers_mask());
 		}
 	}
 
@@ -2129,8 +2136,14 @@ void VoxelLodTerrain::set_voxel_bounds(Box3i p_box) {
 	_update_data->wait_for_end_of_task();
 	Box3i bounds_in_voxels =
 			p_box.clipped(Box3i::from_center_extents(Vector3i(), Vector3iUtil::create(constants::MAX_VOLUME_EXTENT)));
-	// Round to octree size
+
 	const int octree_size = get_mesh_block_size() << (get_lod_count() - 1);
+
+	// Clamp smallest size
+	// TODO If mesh block size is set AFTER bounds, this will break when small bounds are used...
+	bounds_in_voxels.size = math::max(bounds_in_voxels.size, Vector3iUtil::create(octree_size));
+
+	// Round to octree size
 	bounds_in_voxels = bounds_in_voxels.snapped(octree_size);
 	// Can't have a smaller region than one octree
 	for (unsigned i = 0; i < Vector3iUtil::AXIS_COUNT; ++i) {
@@ -2140,6 +2153,8 @@ void VoxelLodTerrain::set_voxel_bounds(Box3i p_box) {
 	}
 	_data->set_bounds(bounds_in_voxels);
 	_update_data->state.force_update_octrees_next_update = true;
+
+	update_configuration_warnings();
 }
 
 void VoxelLodTerrain::set_collision_update_delay(int delay_msec) {
@@ -2253,6 +2268,12 @@ void VoxelLodTerrain::get_configuration_warnings(PackedStringArray &warnings) co
 		return;
 	}
 
+	Ref<VoxelGenerator> generator = get_generator();
+	if (generator.is_valid() && !generator->supports_lod()) {
+		warnings.append(
+				ZN_TTR("The assigned {0} does not support LOD.").format(varray(VoxelGenerator::get_class_static())));
+	}
+
 	Ref<VoxelMesher> mesher = get_mesher();
 
 	// Material
@@ -2262,7 +2283,6 @@ void VoxelLodTerrain::get_configuration_warnings(PackedStringArray &warnings) co
 	}
 
 	if (get_generator_use_gpu()) {
-		Ref<VoxelGenerator> generator = get_generator();
 		if (generator.is_valid() && !generator->supports_shaders()) {
 			warnings.append(String("`use_gpu_generation` is enabled, but {0} does not support running on the GPU.")
 									.format(varray(generator->get_class())));
@@ -2319,7 +2339,6 @@ void VoxelLodTerrain::get_configuration_warnings(PackedStringArray &warnings) co
 		}
 
 		// Detail textures
-		Ref<VoxelGenerator> generator = get_generator();
 		if (generator.is_valid()) {
 			if (get_generator_use_gpu() && !generator->supports_shaders()) {
 				warnings.append(ZN_TTR("The option to use GPU when generating voxels is enabled, but the current "
@@ -2370,6 +2389,10 @@ void VoxelLodTerrain::get_configuration_warnings(PackedStringArray &warnings) co
 				}
 			}
 		}
+	}
+
+	if (get_voxel_bounds().is_empty()) {
+		warnings.append(String("Terrain bounds have an empty size."));
 	}
 }
 
@@ -2698,7 +2721,9 @@ void VoxelLodTerrain::update_gizmos() {
 		const int data_block_size = get_data_block_size() << _edited_blocks_gizmos_lod_index;
 		const Basis basis(Basis().scaled(Vector3(data_block_size, data_block_size, data_block_size)));
 
-		_data->for_each_block_at_lod(
+		// Note, if this causes too much contention somehow, we could get away with not locking spatial lock, dirty
+		// reads of block flags should not hurt since they are only drawn every frame for debugging
+		_data->for_each_block_at_lod_r(
 				[&dr, parent_transform, data_block_size, basis](const Vector3i &bpos, const VoxelDataBlock &block) {
 					if (block.is_edited()) {
 						const Transform3D local_transform(basis, bpos * data_block_size);

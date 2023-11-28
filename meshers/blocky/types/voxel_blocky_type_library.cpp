@@ -1,6 +1,6 @@
 #include "voxel_blocky_type_library.h"
 #include "../../../constants/voxel_string_names.h"
-#include "../../../util/container_funcs.h"
+#include "../../../util/containers/container_funcs.h"
 #include "../../../util/godot/classes/json.h"
 #include "../../../util/godot/classes/object.h"
 #include "../../../util/godot/classes/time.h"
@@ -173,7 +173,7 @@ void VoxelBlockyTypeLibrary::get_configuration_warnings(PackedStringArray &out_w
 		}
 		const StringName type1_name = type1->get_unique_name();
 		for (unsigned int j = i + 1; j < _types.size(); ++j) {
-			const Ref<VoxelBlockyType> &type2 = _types[i];
+			const Ref<VoxelBlockyType> &type2 = _types[j];
 			if (type2.is_null()) {
 				continue;
 			}
@@ -260,7 +260,7 @@ static bool parse_attribute_value(
 
 	} else if (vv.get_type() == Variant::INT) {
 		const int raw_value = vv;
-		ERR_FAIL_COND_V_MSG(raw_value >= 0, false, "Attribute integer value cannot be negative.");
+		ERR_FAIL_COND_V_MSG(raw_value < 0, false, "Attribute integer value cannot be negative.");
 		out_attrib_value = raw_value;
 
 	} else if (vv.get_type() == Variant::BOOL) {

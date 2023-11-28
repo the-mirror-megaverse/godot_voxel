@@ -2,11 +2,11 @@
 #define VOXEL_LOD_TERRAIN_UPDATE_DATA_H
 
 #include "../../constants/voxel_constants.h"
-#include "../../engine/detail_rendering.h"
+#include "../../engine/detail_rendering/detail_rendering.h"
 #include "../../generators/voxel_generator.h"
 #include "../../storage/voxel_data.h"
 #include "../../streams/voxel_stream.h"
-#include "../../util/fixed_array.h"
+#include "../../util/containers/fixed_array.h"
 #include "../voxel_mesh_map.h"
 #include "lod_octree.h"
 

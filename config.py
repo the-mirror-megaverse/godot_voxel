@@ -26,6 +26,7 @@ def get_icons_path():
 def get_doc_classes():
     return [
         "FastNoise2",
+        "VoxelAStarGrid3D",
         "VoxelBlockSerializer",
         "VoxelBlockyAttribute",
         "VoxelBlockyAttributeAxis",
@@ -50,6 +51,7 @@ def get_doc_classes():
         "VoxelGeneratorGraph",
         "VoxelGeneratorHeightmap",
         "VoxelGeneratorImage",
+        "VoxelGeneratorMultipassCB",
         "VoxelGeneratorNoise",
         "VoxelGeneratorNoise2D",
         "VoxelGeneratorScript",
@@ -62,6 +64,7 @@ def get_doc_classes():
         "VoxelInstanceLibraryMultiMeshItem",
         "VoxelInstanceLibrarySceneItem",
         "VoxelInstancer",
+        "VoxelInstancerRigidBody",
         "VoxelLodTerrain",
         "VoxelMesher",
         "VoxelMesherBlocky",
@@ -82,6 +85,7 @@ def get_doc_classes():
         "VoxelTool",
         "VoxelToolBuffer",
         "VoxelToolLodTerrain",
+        "VoxelToolMultipassGenerator",
         "VoxelToolTerrain",
         "VoxelViewer",
         "VoxelVoxLoader",

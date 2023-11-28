@@ -1,11 +1,11 @@
 #include "voxel_lod_terrain_update_task.h"
-#include "../../engine/generate_block_task.h"
-#include "../../engine/load_block_data_task.h"
-#include "../../engine/mesh_block_task.h"
-#include "../../engine/save_block_data_task.h"
 #include "../../engine/voxel_engine.h"
+#include "../../generators/generate_block_task.h"
+#include "../../meshers/mesh_block_task.h"
 #include "../../meshers/transvoxel/voxel_mesher_transvoxel.h"
-#include "../../util/container_funcs.h"
+#include "../../streams/load_block_data_task.h"
+#include "../../streams/save_block_data_task.h"
+#include "../../util/containers/container_funcs.h"
 #include "../../util/dstack.h"
 #include "../../util/godot/classes/engine.h"
 #include "../../util/math/conv.h"
@@ -858,19 +858,21 @@ static void request_block_generate(VolumeID volume_id, unsigned int data_block_s
 	// We should not have done this request in the first place if both stream and generator are null
 	ERR_FAIL_COND(stream_dependency->generator.is_null());
 
-	GenerateBlockTask *task = ZN_NEW(GenerateBlockTask);
-	task->volume_id = volume_id;
-	task->position = block_pos;
-	task->lod_index = lod;
-	task->block_size = data_block_size;
-	task->stream_dependency = stream_dependency;
-	task->tracker = tracker;
-	task->drop_beyond_max_distance = allow_drop;
-	task->data = data;
-	task->use_gpu = settings.generator_use_gpu;
+	VoxelGenerator::BlockTaskParams params;
+	params.volume_id = volume_id;
+	params.block_position = block_pos;
+	params.lod_index = lod;
+	params.block_size = data_block_size;
+	params.stream_dependency = stream_dependency;
+	params.tracker = tracker;
+	params.drop_beyond_max_distance = allow_drop;
+	params.data = data;
+	params.use_gpu = settings.generator_use_gpu;
 
-	init_sparse_octree_priority_dependency(task->priority_dependency, block_pos, lod, data_block_size,
+	init_sparse_octree_priority_dependency(params.priority_dependency, block_pos, lod, data_block_size,
 			shared_viewers_data, volume_transform, settings.lod_distance);
+
+	IThreadedTask *task = stream_dependency->generator->create_block_task(params);
 
 	task_scheduler.push_main_task(task);
 }

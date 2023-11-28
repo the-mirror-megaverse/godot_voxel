@@ -1,16 +1,31 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="VoxelInstanceLibraryMultiMeshItem" inherits="VoxelInstanceLibraryItem" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="VoxelInstanceLibraryMultiMeshItem" inherits="VoxelInstanceLibraryItem" version="4.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
+		Instancer model using [MultiMesh] to render.
 	</brief_description>
 	<description>
+		This model is suited for rendering very large amounts of simple instances, such as grass and rocks.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_collider_group_names" qualifiers="const">
+			<return type="StringName[]" />
+			<description>
+				Gets the list of group names that are added to collider nodes.
+			</description>
+		</method>
 		<method name="get_mesh" qualifiers="const">
 			<return type="Mesh" />
 			<param index="0" name="mesh_lod_index" type="int" />
 			<description>
+			</description>
+		</method>
+		<method name="set_collider_group_names">
+			<return type="void" />
+			<param index="0" name="names" type="StringName[]" />
+			<description>
+				Sets the list of group names that will be added to collider nodes generated for each instance.
 			</description>
 		</method>
 		<method name="set_mesh">

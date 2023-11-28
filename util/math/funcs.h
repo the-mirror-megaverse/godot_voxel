@@ -18,12 +18,12 @@ namespace zylann::math {
 // Generic math functions, only using scalar types.
 
 template <typename T>
-inline T min(const T a, const T b) {
+inline constexpr T min(const T a, const T b) {
 	return a < b ? a : b;
 }
 
 template <typename T>
-inline T max(const T a, const T b) {
+inline constexpr T max(const T a, const T b) {
 	return a > b ? a : b;
 }
 
@@ -78,7 +78,7 @@ inline double maxf(double a, double b) {
 }
 
 template <typename T>
-inline T clamp(const T x, const T min_value, const T max_value) {
+inline constexpr T clamp(const T x, const T min_value, const T max_value) {
 	// TODO Optimization: clang can optimize a min/max implementation. Worth changing to that?
 	// TODO Enforce T as being numeric
 	if (x < min_value) {
@@ -154,6 +154,13 @@ inline int ceildiv(int x, int d) {
 		return x / d;
 	}
 	// return -floordiv(-x, d);
+}
+
+inline int ceildiv(unsigned int x, unsigned int d) {
+#ifdef DEBUG_ENABLED
+	ZN_ASSERT(d > 0);
+#endif
+	return (x + d - 1) / d;
 }
 
 // TODO Rename `wrapi`
@@ -299,6 +306,11 @@ inline void sort(T &a, T &b, T &c, T &d) {
 template <typename T>
 inline T sign_nonzero(T x) {
 	return x < 0 ? -1 : 1;
+}
+
+template <typename T>
+constexpr const T sign(const T v) {
+	return v == 0 ? 0.0f : (v < 0 ? -1.0f : +1.0f);
 }
 
 // Trilinear interpolation between corner values of a unit-sized cube.
