@@ -10,6 +10,16 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="do_flatten_sphere">
+			<return type="void" />
+			<param index="0" name="center" type="Vector3" />
+			<param index="1" name="additive_radius" type="float" />
+			<param index="2" name="removal_radius" type="float" />
+			<param index="3" name="flat_direction" type="Vector3" />
+			<param index="4" name="smoothness" type="float" default="0.0" />
+			<description>
+			</description>
+		</method>
 		<method name="do_hemisphere">
 			<return type="void" />
 			<param index="0" name="center" type="Vector3" />
