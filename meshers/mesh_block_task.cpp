@@ -209,7 +209,7 @@ static void copy_block_and_neighbors(Span<std::shared_ptr<VoxelBufferInternal>> 
 Ref<ArrayMesh> build_mesh(Span<const VoxelMesher::Output::Surface> surfaces, Mesh::PrimitiveType primitive, int flags,
 		// This vector indexes surfaces to the material they use (if a surface uses a material but is empty, it
 		// won't be added to the mesh)
-		std::vector<uint8_t> &mesh_material_indices) {
+		std::vector<uint16_t> &mesh_material_indices) {
 	ZN_PROFILE_SCOPE();
 	ZN_ASSERT(mesh_material_indices.size() == 0);
 
@@ -466,7 +466,8 @@ void MeshBlockTask::build_mesh() {
 		nm_task->output_textures = detail_textures;
 		nm_task->detail_texture_settings = detail_texture_settings;
 		nm_task->priority_dependency = priority_dependency;
-		nm_task->use_gpu = detail_texture_use_gpu;
+		nm_task->use_gpu =
+				(detail_texture_use_gpu && nm_task->generator.is_valid() && nm_task->generator->supports_shaders());
 
 		VoxelEngine::get_singleton().push_async_task(nm_task);
 	}
