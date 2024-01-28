@@ -208,6 +208,12 @@
 				When streaming terrain, this can be used to determine if an area has fully "loaded", in case the game relies meshes or mesh colliders.
 			</description>
 		</method>
+		<method name="restart_stream">
+			<return type="void" />
+			<description>
+				Restarts the stream. This performs the same operations as when stream parameters change, except this method does not change stream parameters.
+			</description>
+		</method>
 		<method name="save_modified_blocks">
 			<return type="void" />
 			<description>
