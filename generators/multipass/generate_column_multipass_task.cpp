@@ -173,7 +173,7 @@ void GenerateColumnMultipassTask::run(ThreadedTaskContext &ctx) {
 
 		bool spawned_subtasks = false;
 		bool postpone = false;
-		int debug_subtask_count = 0;
+		//int debug_subtask_count = 0;
 
 		// Check loading levels
 		{
@@ -250,7 +250,7 @@ void GenerateColumnMultipassTask::run(ThreadedTaskContext &ctx) {
 							column->pending_subpass_tasks_mask |= (1 << prev_subpass_index);
 
 							spawned_subtasks = true;
-							++debug_subtask_count;
+							//++debug_subtask_count;
 						}
 						// TODO If a column got deallocated after it was returned once, restart its generation process.
 						// This would be to cover cases where blocks of a column get requested more than once. In the
