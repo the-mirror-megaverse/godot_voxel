@@ -5,6 +5,10 @@ on:
   pull_request:
     branches: [ master ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Global Cache Settings
 # SCONS_CACHE for windows must be set in the build environment
 env:
@@ -24,33 +28,38 @@ jobs:
           - name: 4.2 Editor
             target: editor
             precision: single
-            #cache_action: actions/cache@v3
             executable_name: godot.windows.editor.x86_64.exe
+            tracy: no
+          
+          - name: 4.2 Profiling Editor
+            target: editor
+            precision: single
+            # This is not a built-in feature of Godot so we have to do some changes manually
+            executable_name: godot.windows.tracy.editor.x86_64.exe
+            original_executable_name: godot.windows.editor.x86_64.exe
+            tracy: yes
 
           - name: 4.2 Editor Float64
             target: editor
             precision: double
-            #cache_action: actions/cache@v3
             executable_name: godot.windows.editor.double.x86_64.exe
+            tracy: no
 
           - name: 4.2 Template
             target: template_release
             precision: single
-            # I don't remember why this one used a different action in the past?
-            # Either way, Github Actions does not support matrix variables in `uses` yet.
-            # See https://github.com/orgs/community/discussions/9049
-            #cache_action: RevoluPowered/cache@v2.1
             executable_name: godot.windows.template_release.x86_64.exe
+            tracy: no
 
     steps:
       # Clone Godot
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           repository: godotengine/godot
           ref: ${{ env.GODOT_BASE_BRANCH }}
 
       # Clone our module under the correct directory
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: modules/voxel
 
@@ -59,7 +68,7 @@ jobs:
       - name: Load .scons_cache directory
         id: windows-cache
         #uses: ${{matrix.cache_action}}
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /.scons_cache/
           key: ${{matrix.executable_name}}-${{env.GODOT_BASE_BRANCH}}-${{github.ref}}-${{github.sha}}
@@ -70,7 +79,7 @@ jobs:
 
       # Use python 3.x release (works cross platform; best to keep self contained in it's own step)
       - name: Set up Python 3.x
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           # Semantic version range syntax or exact version of a Python version
           python-version: '3.x'
@@ -85,6 +94,20 @@ jobs:
           python --version
           scons --version
 
+      - name: Install Tracy
+        if: ${{ matrix.tracy == 'yes' }}
+        uses: actions/checkout@v4
+        with:
+          repository: wolfpld/tracy
+          ref: v0.10
+          path: thirdparty/tracy
+
+      # This is to instrument specific parts of Godot. Our module already has built-in instrumentation.
+      - name: Instrument code
+        if: ${{ matrix.tracy == 'yes' }}
+        run:
+          python modules/voxel/misc/instrument.py -d . -c modules/voxel/misc/instruments.json
+
       # We should always be explicit with our flags usage here since it's gonna be sure to always set those flags
       # TODO Enhancement: we'd like to use `warnings=extra` with MSVC but Godot doesn't compile yet with that level of warnings.
       # See https://github.com/godotengine/godot/issues/66537
@@ -92,10 +115,15 @@ jobs:
         env:
           SCONS_CACHE: /.scons_cache/
         run: |
-          scons -j2 verbose=yes warnings=all werror=yes platform=windows tests=no target=${{matrix.target}} dev_build=no precision=${{matrix.precision}}
+          scons verbose=yes warnings=all werror=yes platform=windows tests=no target=${{matrix.target}} dev_build=no precision=${{matrix.precision}} tracy=${{matrix.tracy}}
+
+      - name: "Rename executable"
+        if: ${{ matrix.tracy == 'yes' }}
+        run:
+          mv bin/${{matrix.original_executable_name}} bin/${{matrix.executable_name}}
 
       # Make build available
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.executable_name}}
           path: bin/${{matrix.executable_name}}

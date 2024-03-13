@@ -5,9 +5,11 @@
 #include "../engine/ids.h"
 #include "../engine/priority_dependency.h"
 #include "../util/containers/span.h"
+#include "../util/containers/std_vector.h"
 #include "../util/godot/classes/resource.h"
 #include "../util/math/box3i.h"
 #include "../util/math/vector3f.h"
+#include "../util/tasks/cancellation_token.h"
 #include "../util/thread/mutex.h"
 
 #include <memory>
@@ -19,13 +21,13 @@ class AsyncDependencyTracker;
 
 namespace voxel {
 
-class VoxelBufferInternal;
+class VoxelBuffer;
 class ComputeShader;
 struct ComputeShaderParameters;
 struct StreamingDependency;
 class VoxelData;
 
-namespace gd {
+namespace godot {
 class VoxelBuffer;
 }
 
@@ -52,7 +54,7 @@ public:
 	};
 
 	struct VoxelQueryData {
-		VoxelBufferInternal &voxel_buffer;
+		VoxelBuffer &voxel_buffer;
 		Vector3i origin_in_voxels;
 		uint32_t lod;
 	};
@@ -70,7 +72,8 @@ public:
 		std::shared_ptr<StreamingDependency> stream_dependency; // For saving generator output
 		std::shared_ptr<VoxelData> data; // Just for modifiers
 		std::shared_ptr<AsyncDependencyTracker> tracker; // For async edits
-		std::shared_ptr<VoxelBufferInternal> voxels; // Optionally re-use a voxel buffer for the result
+		std::shared_ptr<VoxelBuffer> voxels; // Optionally re-use a voxel buffer for the result
+		TaskCancellationToken cancellation_token; // For explicit cancellation
 	};
 
 	// Creates a threaded task that will use the generator asynchronously to generate a block that will be returned to
@@ -122,16 +125,16 @@ public:
 		// generated depending on where the code is integrated.
 		String glsl;
 		// Associated resources
-		std::vector<ShaderParameter> parameters;
+		StdVector<ShaderParameter> parameters;
 
 		// The generated source will contain a `generate` function starting with a `vec3 position` argument,
 		// followed by outputs like `out float out_sd, ...`, which determines what will be returned by the
 		// compute shader.
-		std::vector<ShaderOutput> outputs;
+		StdVector<ShaderOutput> outputs;
 	};
 
 	struct ShaderOutputs {
-		std::vector<ShaderOutput> outputs;
+		StdVector<ShaderOutput> outputs;
 	};
 
 	virtual bool get_shader_source(ShaderSourceData &out_data) const;
@@ -175,7 +178,7 @@ public:
 protected:
 	static void _bind_methods();
 
-	void _b_generate_block(Ref<gd::VoxelBuffer> out_buffer, Vector3 origin_in_voxels, int lod);
+	void _b_generate_block(Ref<godot::VoxelBuffer> out_buffer, Vector3 origin_in_voxels, int lod);
 
 	std::shared_ptr<ComputeShader> _detail_rendering_shader;
 	std::shared_ptr<ComputeShaderParameters> _detail_rendering_shader_parameters;

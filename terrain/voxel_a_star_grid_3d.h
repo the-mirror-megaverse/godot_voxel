@@ -4,6 +4,7 @@
 #include "../storage/voxel_data.h"
 #include "../util/a_star_grid_3d.h"
 #include "../util/containers/dynamic_bitset.h"
+#include "../util/containers/std_vector.h"
 #include <atomic>
 
 namespace zylann::voxel {
@@ -42,14 +43,14 @@ private:
 	};
 
 	// Cached 3D bitmap
-	std::vector<Chunk> _grid_cache;
+	StdVector<Chunk> _grid_cache;
 	Vector3i _grid_cache_size;
 
 	// Tracks which chunks are loaded
 	DynamicBitset _grid_chunk_states;
 
 	// Temporary buffer used to read voxels from the main voxel storage
-	VoxelBufferInternal _voxel_buffer;
+	VoxelBuffer _voxel_buffer;
 };
 
 // Godot-facing API for voxel grid A* pathfinding. Suitable for blocky terrains.

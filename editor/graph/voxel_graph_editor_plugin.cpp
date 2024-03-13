@@ -23,6 +23,7 @@
 namespace zylann::voxel {
 
 using namespace pg;
+using namespace zylann::godot;
 
 VoxelGraphEditorPlugin::VoxelGraphEditorPlugin() {}
 

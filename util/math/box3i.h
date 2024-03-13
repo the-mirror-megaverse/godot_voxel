@@ -1,9 +1,10 @@
 #ifndef ZYLANN_BOX3I_H
 #define ZYLANN_BOX3I_H
 
+#include "../containers/small_vector.h"
+#include "../containers/std_vector.h"
+#include "../std_stringstream.h"
 #include "vector3i.h"
-#include <iosfwd>
-#include <vector>
 
 namespace zylann {
 
@@ -214,12 +215,16 @@ public:
 
 	// Subtracts another box from the current box.
 	// If any, boxes composing the remaining volume are added to the given vector.
-	inline void difference_to_vec(const Box3i &b, std::vector<Box3i> &output) const {
+	inline void difference_to_vec(const Box3i &b, StdVector<Box3i> &output) const {
+		difference(b, [&output](const Box3i &sub_box) { output.push_back(sub_box); });
+	}
+
+	inline void difference_to_vec(const Box3i &b, SmallVector<Box3i, 6> &output) const {
 		difference(b, [&output](const Box3i &sub_box) { output.push_back(sub_box); });
 	}
 
 	// Calls a function on all side cell positions belonging to the box.
-	// This function was implemented with no particular order in mind.
+	// Cells don't follow a particular order and may not be relied on.
 	template <typename F>
 	void for_inner_outline(F f) const {
 		//     o-------o
@@ -290,6 +295,10 @@ public:
 		return Box3i::from_min_max(math::ceildiv(pos, step_size), math::floordiv(pos + size, step_size));
 	}
 
+	inline Box3i scaled(int scale) const {
+		return Box3i(pos * scale, size * scale);
+	}
+
 	static inline void clip_range(int &pos, int &size, int lim_pos, int lim_size) {
 		int max_pos = pos + size;
 		int lim_max_pos = lim_pos + lim_size;
@@ -357,7 +366,7 @@ inline bool operator==(const Box3i &a, const Box3i &b) {
 	return a.pos == b.pos && a.size == b.size;
 }
 
-std::stringstream &operator<<(std::stringstream &ss, const Box3i &box);
+StdStringStream &operator<<(StdStringStream &ss, const Box3i &box);
 
 } // namespace zylann
 

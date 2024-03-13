@@ -4,6 +4,7 @@
 #include "../engine/ids.h"
 #include "../engine/priority_dependency.h"
 #include "../engine/streaming_dependency.h"
+#include "../util/containers/std_vector.h"
 #include "../util/tasks/threaded_task.h"
 #include "generate_block_gpu_task.h"
 
@@ -30,7 +31,7 @@ public:
 	bool is_cancelled() override;
 	void apply_result() override;
 
-	void set_gpu_results(std::vector<GenerateBlockGPUTaskResult> &&results) override;
+	void set_gpu_results(StdVector<GenerateBlockGPUTaskResult> &&results) override;
 
 private:
 	void run_gpu_task(zylann::ThreadedTaskContext &ctx);
@@ -39,7 +40,7 @@ private:
 	void run_stream_saving_and_finish();
 
 	// Not an input, but can be assigned a re-usable instance to avoid allocating one in the task
-	std::shared_ptr<VoxelBufferInternal> _voxels;
+	std::shared_ptr<VoxelBuffer> _voxels;
 
 	Vector3i _position;
 	VolumeID _volume_id;
@@ -51,12 +52,13 @@ private:
 	std::shared_ptr<StreamingDependency> _stream_dependency; // For saving generator output
 	std::shared_ptr<VoxelData> _data; // Just for modifiers
 	std::shared_ptr<AsyncDependencyTracker> _tracker; // For async edits
+	TaskCancellationToken _cancellation_token;
 
 	bool _has_run = false;
 	bool _too_far = false;
 	bool _max_lod_hint = false;
 	uint8_t _stage = 0;
-	std::vector<GenerateBlockGPUTaskResult> _gpu_generation_results;
+	StdVector<GenerateBlockGPUTaskResult> _gpu_generation_results;
 };
 
 } // namespace voxel

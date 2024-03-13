@@ -1,6 +1,7 @@
 #include "voxel_graph_node_dialog.h"
 #include "../../constants/voxel_string_names.h"
 #include "../../generators/graph/node_type_db.h"
+#include "../../util/containers/std_unordered_set.h"
 #include "../../util/godot/classes/button.h"
 #include "../../util/godot/classes/display_server.h"
 #include "../../util/godot/classes/editor_file_dialog.h"
@@ -21,11 +22,11 @@
 #include "../../util/godot/editor_scale.h"
 #include "graph_nodes_doc_data.h"
 
-#include <unordered_set>
-
 namespace zylann::voxel {
 
-static const GraphNodesDocData::Node *get_graph_node_documentation(String name) {
+namespace {
+
+const GraphNodesDocData::Node *get_graph_node_documentation(String name) {
 	for (unsigned int i = 0; i < GraphNodesDocData::COUNT; ++i) {
 		const GraphNodesDocData::Node &node = GraphNodesDocData::g_data[i];
 		if (node.name == name) {
@@ -35,8 +36,8 @@ static const GraphNodesDocData::Node *get_graph_node_documentation(String name) 
 	return nullptr;
 }
 
-static void get_graph_node_documentation_category_names(std::vector<String> &out_category_names) {
-	std::unordered_set<String> categories;
+void get_graph_node_documentation_category_names(StdVector<String> &out_category_names) {
+	StdUnorderedSet<String> categories;
 	for (unsigned int i = 0; i < GraphNodesDocData::COUNT; ++i) {
 		const GraphNodesDocData::Node &node = GraphNodesDocData::g_data[i];
 		if (categories.insert(node.category).second) {
@@ -44,6 +45,59 @@ static void get_graph_node_documentation_category_names(std::vector<String> &out
 		}
 	}
 }
+
+// This is a dumbed down re-implementation of `Tree::_up` because this stuff is not exposed...
+void select_up(Tree &tree) {
+	TreeItem *selected_item = tree.get_selected();
+
+	if (selected_item == nullptr) {
+		ZN_PRINT_VERBOSE("No item selected in tree, can't select down");
+		return;
+	}
+
+	TreeItem *prev = selected_item->get_prev_visible();
+
+	const int col = 0;
+	while (prev != nullptr && !prev->is_selectable(col)) {
+		prev = prev->get_prev_visible();
+	}
+	if (prev == nullptr) {
+		return;
+	}
+
+	prev->select(col);
+
+	tree.ensure_cursor_is_visible();
+	// tree.accept_event();
+}
+
+// This is a dumbed down re-implementation of `Tree::_down` because this stuff is not exposed...
+void select_down(Tree &tree) {
+	TreeItem *selected_item = tree.get_selected();
+
+	if (selected_item == nullptr) {
+		ZN_PRINT_VERBOSE("No item selected in tree, can't select down");
+		return;
+	}
+
+	TreeItem *next = selected_item->get_next_visible();
+
+	const int col = 0;
+
+	while (next != nullptr && !next->is_selectable(col)) {
+		next = next->get_next_visible();
+	}
+	if (next == nullptr) {
+		return;
+	}
+
+	next->select(col);
+
+	tree.ensure_cursor_is_visible();
+	// tree.accept_event();
+}
+
+} // namespace
 
 const char *VoxelGraphNodeDialog::SIGNAL_NODE_SELECTED = "node_selected";
 const char *VoxelGraphNodeDialog::SIGNAL_FILE_SELECTED = "file_selected";
@@ -213,7 +267,7 @@ void VoxelGraphNodeDialog::update_tree(bool autoselect) {
 	const String filter = _filter_line_edit->get_text().strip_edges();
 	const bool use_filter = !filter.is_empty();
 
-	std::vector<unsigned int> filtered_items;
+	StdVector<unsigned int> filtered_items;
 
 	for (unsigned int i = 0; i < _items.size(); ++i) {
 		const Item &item = _items[i];
@@ -224,7 +278,7 @@ void VoxelGraphNodeDialog::update_tree(bool autoselect) {
 
 	// Populate tree
 
-	std::vector<TreeItem *> category_tree_items;
+	StdVector<TreeItem *> category_tree_items;
 	category_tree_items.resize(_category_names.size(), nullptr);
 
 	bool autoselected = true;
@@ -262,57 +316,6 @@ void VoxelGraphNodeDialog::_on_filter_text_changed(String new_text) {
 	update_tree(true);
 }
 
-// This is a dumbed down re-implementation of `Tree::_up` because this stuff is not exposed...
-static void select_up(Tree &tree) {
-	TreeItem *selected_item = tree.get_selected();
-
-	if (selected_item == nullptr) {
-		ZN_PRINT_VERBOSE("No item selected in tree, can't select down");
-		return;
-	}
-
-	TreeItem *prev = selected_item->get_prev_visible();
-
-	const int col = 0;
-	while (prev != nullptr && !prev->is_selectable(col)) {
-		prev = prev->get_prev_visible();
-	}
-	if (prev == nullptr) {
-		return;
-	}
-
-	prev->select(col);
-
-	tree.ensure_cursor_is_visible();
-	// tree.accept_event();
-}
-
-// This is a dumbed down re-implementation of `Tree::_down` because this stuff is not exposed...
-static void select_down(Tree &tree) {
-	TreeItem *selected_item = tree.get_selected();
-
-	if (selected_item == nullptr) {
-		ZN_PRINT_VERBOSE("No item selected in tree, can't select down");
-		return;
-	}
-
-	TreeItem *next = selected_item->get_next_visible();
-
-	const int col = 0;
-
-	while (next != nullptr && !next->is_selectable(col)) {
-		next = next->get_next_visible();
-	}
-	if (next == nullptr) {
-		return;
-	}
-
-	next->select(col);
-
-	tree.ensure_cursor_is_visible();
-	// tree.accept_event();
-}
-
 void VoxelGraphNodeDialog::_on_filter_gui_input(Ref<InputEvent> event) {
 	Ref<InputEventKey> key_event = event;
 	if (key_event.is_valid()) {
@@ -326,17 +329,17 @@ void VoxelGraphNodeDialog::_on_filter_gui_input(Ref<InputEvent> event) {
 
 		if (key_event->is_pressed()) {
 			switch (key_event->get_keycode()) {
-				case godot::KEY_UP:
+				case ::godot::KEY_UP:
 					select_up(*_tree);
 					_filter_line_edit->accept_event();
 					break;
 
-				case godot::KEY_DOWN:
+				case ::godot::KEY_DOWN:
 					select_down(*_tree);
 					_filter_line_edit->accept_event();
 					break;
 
-				case godot::KEY_ENTER:
+				case ::godot::KEY_ENTER:
 					_on_tree_item_activated();
 					break;
 
@@ -367,7 +370,7 @@ void VoxelGraphNodeDialog::_on_tree_item_activated() {
 	} else if (id == ID_FUNCTION_QUICK_OPEN) {
 #ifdef ZN_GODOT
 		// Quick open function nodes
-		_function_quick_open_dialog->popup_dialog(get_class_name_str<pg::VoxelGraphFunction>());
+		_function_quick_open_dialog->popup_dialog(godot::get_class_name_str<pg::VoxelGraphFunction>());
 #endif
 
 	} else {

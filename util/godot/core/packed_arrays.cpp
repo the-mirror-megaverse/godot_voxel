@@ -2,9 +2,13 @@
 #include "../../math/conv.h"
 #include "../../profiling.h"
 
-namespace zylann {
+#ifdef TOOLS_ENABLED
+#include "packed_string_array.h"
+#endif
 
-void copy_to(PackedVector3Array &dst, const std::vector<Vector3f> &src) {
+namespace zylann::godot {
+
+void copy_to(PackedVector3Array &dst, const StdVector<Vector3f> &src) {
 	dst.resize(src.size());
 	// resize can fail in case allocation was not possible
 	ERR_FAIL_COND(dst.size() != static_cast<int>(src.size()));
@@ -23,7 +27,7 @@ void copy_to(PackedVector3Array &dst, const std::vector<Vector3f> &src) {
 #endif
 }
 
-void copy_to(PackedVector2Array &dst, const std::vector<Vector2f> &src) {
+void copy_to(PackedVector2Array &dst, const StdVector<Vector2f> &src) {
 	dst.resize(src.size());
 	// resize can fail in case allocation was not possible
 	ERR_FAIL_COND(dst.size() != static_cast<int>(src.size()));
@@ -53,7 +57,7 @@ inline void copy_to_template(PackedVector_T &dst, Span<const T> src) {
 	memcpy(dst_data, src.data(), src.size() * sizeof(T));
 }
 
-void copy_to(PackedVector3Array &dst, const std::vector<Vector3> &src) {
+void copy_to(PackedVector3Array &dst, const StdVector<Vector3> &src) {
 	copy_to_template(dst, to_span(src));
 }
 
@@ -61,7 +65,7 @@ void copy_to(PackedVector3Array &dst, Span<const Vector3> src) {
 	copy_to_template(dst, src);
 }
 
-void copy_to(PackedInt32Array &dst, const std::vector<int32_t> &src) {
+void copy_to(PackedInt32Array &dst, const StdVector<int32_t> &src) {
 	copy_to_template(dst, to_span(src));
 }
 
@@ -69,11 +73,11 @@ void copy_to(PackedInt32Array &dst, Span<const int32_t> src) {
 	copy_to_template(dst, src);
 }
 
-void copy_to(PackedColorArray &dst, const std::vector<Color> &src) {
+void copy_to(PackedColorArray &dst, const StdVector<Color> &src) {
 	copy_to_template(dst, to_span(src));
 }
 
-void copy_to(PackedFloat32Array &dst, const std::vector<float> &src) {
+void copy_to(PackedFloat32Array &dst, const StdVector<float> &src) {
 	copy_to_template(dst, to_span(src));
 }
 
@@ -105,4 +109,19 @@ void copy_to(Span<float> dst, const PackedFloat32Array &src) {
 	memcpy(dst.data(), src_data, src_size * sizeof(float));
 }
 
-} // namespace zylann
+#ifdef TOOLS_ENABLED
+
+Array to_array(const PackedStringArray &src) {
+	Array dst;
+	const int size = src.size();
+	dst.resize(size);
+	const String *src_p = src.ptr();
+	for (int i = 0; i < size; ++i) {
+		dst[i] = src_p[i];
+	}
+	return dst;
+}
+
+#endif
+
+} // namespace zylann::godot

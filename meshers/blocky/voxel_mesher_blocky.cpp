@@ -1,6 +1,6 @@
 #include "voxel_mesher_blocky.h"
 #include "../../constants/cube_tables.h"
-#include "../../storage/voxel_buffer_internal.h"
+#include "../../storage/voxel_buffer.h"
 #include "../../util/containers/span.h"
 #include "../../util/godot/core/array.h"
 #include "../../util/godot/core/packed_arrays.h"
@@ -8,6 +8,8 @@
 #include "../../util/math/conv.h"
 // TODO GDX: String has no `operator+=`
 #include "../../util/godot/core/string.h"
+
+using namespace zylann::godot;
 
 namespace zylann::voxel {
 
@@ -47,15 +49,15 @@ inline bool contributes_to_ao(const VoxelBlockyLibraryBase::BakedData &lib, uint
 	return true;
 }
 
-std::vector<int> &get_tls_index_offsets() {
-	static thread_local std::vector<int> tls_index_offsets;
+StdVector<int> &get_tls_index_offsets() {
+	static thread_local StdVector<int> tls_index_offsets;
 	return tls_index_offsets;
 }
 
 } // namespace
 
 template <typename Type_T>
-void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per_material,
+void generate_blocky_mesh(StdVector<VoxelMesherBlocky::Arrays> &out_arrays_per_material,
 		VoxelMesher::Output::CollisionSurface *collision_surface, const Span<Type_T> type_buffer,
 		const Vector3i block_size, const VoxelBlockyLibraryBase::BakedData &library, bool bake_occlusion,
 		float baked_occlusion_darkness) {
@@ -77,7 +79,7 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 	const Vector3i min = Vector3iUtil::create(VoxelMesherBlocky::PADDING);
 	const Vector3i max = block_size - Vector3iUtil::create(VoxelMesherBlocky::PADDING);
 
-	std::vector<int> &index_offsets = get_tls_index_offsets();
+	StdVector<int> &index_offsets = get_tls_index_offsets();
 	index_offsets.clear();
 	index_offsets.resize(out_arrays_per_material.size(), 0);
 
@@ -217,11 +219,11 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 						ZN_ASSERT(surface.material_id >= 0 && surface.material_id < index_offsets.size());
 						int &index_offset = index_offsets[surface.material_id];
 
-						const std::vector<Vector3f> &side_positions = surface.side_positions[side];
+						const StdVector<Vector3f> &side_positions = surface.side_positions[side];
 						const unsigned int vertex_count = side_positions.size();
 
-						const std::vector<Vector2f> &side_uvs = surface.side_uvs[side];
-						const std::vector<float> &side_tangents = surface.side_tangents[side];
+						const StdVector<Vector2f> &side_uvs = surface.side_uvs[side];
+						const StdVector<float> &side_tangents = surface.side_tangents[side];
 
 						// Append vertices of the faces in one go, don't use push_back
 
@@ -299,7 +301,7 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 							}
 						}
 
-						const std::vector<int> &side_indices = surface.side_indices[side];
+						const StdVector<int> &side_indices = surface.side_indices[side];
 						const unsigned int index_count = side_indices.size();
 
 						{
@@ -312,8 +314,8 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 						}
 
 						if (collision_surface != nullptr && surface.collision_enabled) {
-							std::vector<Vector3f> &dst_positions = collision_surface->positions;
-							std::vector<int> &dst_indices = collision_surface->indices;
+							StdVector<Vector3f> &dst_positions = collision_surface->positions;
+							StdVector<int> &dst_indices = collision_surface->indices;
 
 							{
 								const unsigned int append_index = dst_positions.size();
@@ -353,13 +355,13 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 					ZN_ASSERT(surface.material_id >= 0 && surface.material_id < index_offsets.size());
 					int &index_offset = index_offsets[surface.material_id];
 
-					const std::vector<Vector3f> &positions = surface.positions;
+					const StdVector<Vector3f> &positions = surface.positions;
 					const unsigned int vertex_count = positions.size();
 					const Color modulate_color = voxel.color;
 
-					const std::vector<Vector3f> &normals = surface.normals;
-					const std::vector<Vector2f> &uvs = surface.uvs;
-					const std::vector<float> &tangents = surface.tangents;
+					const StdVector<Vector3f> &normals = surface.normals;
+					const StdVector<Vector2f> &uvs = surface.uvs;
+					const StdVector<float> &tangents = surface.tangents;
 
 					const Vector3f pos(x - 1, y - 1, z - 1);
 
@@ -378,7 +380,7 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 						arrays.colors.push_back(modulate_color);
 					}
 
-					const std::vector<int> &indices = surface.indices;
+					const StdVector<int> &indices = surface.indices;
 					const unsigned int index_count = indices.size();
 
 					for (unsigned int i = 0; i < index_count; ++i) {
@@ -386,8 +388,8 @@ void generate_blocky_mesh(std::vector<VoxelMesherBlocky::Arrays> &out_arrays_per
 					}
 
 					if (collision_surface != nullptr && surface.collision_enabled) {
-						std::vector<Vector3f> &dst_positions = collision_surface->positions;
-						std::vector<int> &dst_indices = collision_surface->indices;
+						StdVector<Vector3f> &dst_positions = collision_surface->positions;
+						StdVector<int> &dst_indices = collision_surface->indices;
 
 						for (unsigned int i = 0; i < vertex_count; ++i) {
 							dst_positions.push_back(positions[i] + pos);
@@ -450,7 +452,7 @@ bool VoxelMesherBlocky::get_occlusion_enabled() const {
 }
 
 void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::Input &input) {
-	const int channel = VoxelBufferInternal::CHANNEL_TYPE;
+	const int channel = VoxelBuffer::CHANNEL_TYPE;
 	Parameters params;
 	{
 		RWLockRead rlock(_parameters_lock);
@@ -466,7 +468,7 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 
 	Cache &cache = get_tls_cache();
 
-	std::vector<Arrays> &arrays_per_material = cache.arrays_per_material;
+	StdVector<Arrays> &arrays_per_material = cache.arrays_per_material;
 	for (unsigned int i = 0; i < arrays_per_material.size(); ++i) {
 		Arrays &a = arrays_per_material[i];
 		a.clear();
@@ -485,7 +487,7 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 	// - Slower
 	// => Could be implemented in a separate class?
 
-	const VoxelBufferInternal &voxels = input.voxels;
+	const VoxelBuffer &voxels = input.voxels;
 #ifdef TOOLS_ENABLED
 	if (input.lod_index != 0) {
 		WARN_PRINT("VoxelMesherBlocky received lod != 0, it is not supported");
@@ -499,7 +501,7 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 	// That means we can use raw pointers to voxel data inside instead of using the higher-level getters,
 	// and then save a lot of time.
 
-	if (voxels.get_channel_compression(channel) == VoxelBufferInternal::COMPRESSION_UNIFORM) {
+	if (voxels.get_channel_compression(channel) == VoxelBuffer::COMPRESSION_UNIFORM) {
 		// All voxels have the same type.
 		// If it's all air, nothing to do. If it's all cubes, nothing to do either.
 		// TODO Handle edge case of uniform block with non-cubic voxels!
@@ -507,7 +509,7 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 		// error), decompress into a backing array to still allow the use of the same algorithm.
 		return;
 
-	} else if (voxels.get_channel_compression(channel) != VoxelBufferInternal::COMPRESSION_NONE) {
+	} else if (voxels.get_channel_compression(channel) != VoxelBuffer::COMPRESSION_NONE) {
 		// No other form of compression is allowed
 		ERR_PRINT("VoxelMesherBlocky received unsupported voxel compression");
 		return;
@@ -531,7 +533,7 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 	}
 
 	const Vector3i block_size = voxels.get_size();
-	const VoxelBufferInternal::Depth channel_depth = voxels.get_channel_depth(channel);
+	const VoxelBuffer::Depth channel_depth = voxels.get_channel_depth(channel);
 
 	VoxelMesher::Output::CollisionSurface *collision_surface = nullptr;
 	if (input.collision_hint) {
@@ -551,12 +553,12 @@ void VoxelMesherBlocky::build(VoxelMesher::Output &output, const VoxelMesher::In
 		}
 
 		switch (channel_depth) {
-			case VoxelBufferInternal::DEPTH_8_BIT:
+			case VoxelBuffer::DEPTH_8_BIT:
 				generate_blocky_mesh(arrays_per_material, collision_surface, raw_channel, block_size,
 						library_baked_data, params.bake_occlusion, baked_occlusion_darkness);
 				break;
 
-			case VoxelBufferInternal::DEPTH_16_BIT:
+			case VoxelBuffer::DEPTH_16_BIT:
 				generate_blocky_mesh(arrays_per_material, collision_surface,
 						raw_channel.reinterpret_cast_to<uint16_t>(), block_size, library_baked_data,
 						params.bake_occlusion, baked_occlusion_darkness);
@@ -629,13 +631,14 @@ Ref<Resource> VoxelMesherBlocky::duplicate(bool p_subresources) const {
 		params.library = params.library->duplicate(true);
 	}
 
-	VoxelMesherBlocky *c = memnew(VoxelMesherBlocky);
+	Ref<VoxelMesherBlocky> c;
+	c.instantiate();
 	c->_parameters = params;
 	return c;
 }
 
 int VoxelMesherBlocky::get_used_channels_mask() const {
-	return (1 << VoxelBufferInternal::CHANNEL_TYPE);
+	return (1 << VoxelBuffer::CHANNEL_TYPE);
 }
 
 Ref<Material> VoxelMesherBlocky::get_material_by_index(unsigned int index) const {

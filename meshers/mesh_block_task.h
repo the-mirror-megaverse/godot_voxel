@@ -7,8 +7,10 @@
 #include "../engine/meshing_dependency.h"
 #include "../engine/priority_dependency.h"
 #include "../generators/generate_block_gpu_task.h"
-#include "../storage/voxel_buffer_internal.h"
+#include "../storage/voxel_buffer.h"
+#include "../util/containers/std_vector.h"
 #include "../util/godot/classes/array_mesh.h"
+#include "../util/tasks/cancellation_token.h"
 #include "../util/tasks/threaded_task.h"
 
 namespace zylann::voxel {
@@ -30,19 +32,24 @@ public:
 	bool is_cancelled() override;
 	void apply_result() override;
 
-	void set_gpu_results(std::vector<GenerateBlockGPUTaskResult> &&results) override;
+	void set_gpu_results(StdVector<GenerateBlockGPUTaskResult> &&results) override;
 
 	static int debug_get_running_count();
 
 	// 3x3x3 or 4x4x4 grid of voxel blocks.
-	FixedArray<std::shared_ptr<VoxelBufferInternal>, constants::MAX_BLOCK_COUNT_PER_REQUEST> blocks;
+	FixedArray<std::shared_ptr<VoxelBuffer>, constants::MAX_BLOCK_COUNT_PER_REQUEST> blocks;
 	// TODO Need to provide format
-	// FixedArray<uint8_t, VoxelBufferInternal::MAX_CHANNELS> channel_depths;
+	// FixedArray<uint8_t, VoxelBuffer::MAX_CHANNELS> channel_depths;
 	Vector3i mesh_block_position; // In mesh blocks of the specified lod
 	VolumeID volume_id;
 	uint8_t lod_index = 0;
 	uint8_t blocks_count = 0;
+	// If true, a rendering mesh resource will be created if possible.
+	bool require_visual = true;
+	// If true, a collision mesh is required if possible
 	bool collision_hint = false;
+	// If true, the mesh will be used in a context with LOD, which might require a few extra things in the way it is
+	// built
 	bool lod_hint = false;
 	// Detail textures might be enabled, but we don't always want to update them in every mesh update.
 	// So this boolean is also checked to know if they should be computed.
@@ -55,6 +62,7 @@ public:
 	std::shared_ptr<VoxelData> data;
 	DetailRenderingSettings detail_texture_settings;
 	Ref<VoxelGenerator> detail_texture_generator_override;
+	TaskCancellationToken cancellation_token;
 
 private:
 	void gather_voxels_gpu(zylann::ThreadedTaskContext &ctx);
@@ -65,16 +73,16 @@ private:
 	bool _too_far = false;
 	bool _has_mesh_resource = false;
 	uint8_t _stage = 0;
-	VoxelBufferInternal _voxels;
+	VoxelBuffer _voxels;
 	VoxelMesher::Output _surfaces_output;
 	Ref<Mesh> _mesh;
-	std::vector<uint16_t> _mesh_material_indices; // Indexed by mesh surface
+	StdVector<uint16_t> _mesh_material_indices; // Indexed by mesh surface
 	std::shared_ptr<DetailTextureOutput> _detail_textures;
-	std::vector<GenerateBlockGPUTaskResult> _gpu_generation_results;
+	StdVector<GenerateBlockGPUTaskResult> _gpu_generation_results;
 };
 
 Ref<ArrayMesh> build_mesh(Span<const VoxelMesher::Output::Surface> surfaces, Mesh::PrimitiveType primitive, int flags,
-		std::vector<uint16_t> &mesh_material_indices);
+		StdVector<uint16_t> &mesh_material_indices);
 
 } // namespace zylann::voxel
 

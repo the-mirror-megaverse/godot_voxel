@@ -4,14 +4,16 @@
 #include "../util/godot/core/packed_arrays.h"
 #include "../util/godot/direct_mesh_instance.h"
 #include "../util/godot/direct_multimesh_instance.h"
-#include "../util/memory.h"
+#include "../util/memory/memory.h"
 
-namespace zylann {
+namespace zylann::godot {
+
+namespace {
 
 FixedArray<Ref<Mesh>, DebugColors::ID_COUNT> g_wirecubes;
 bool g_finalized = false;
 
-static Color get_color(DebugColors::ColorID id) {
+Color get_color(DebugColors::ColorID id) {
 	switch (id) {
 		case DebugColors::ID_VOXEL_BOUNDS:
 			return Color(1, 1, 1);
@@ -26,6 +28,8 @@ static Color get_color(DebugColors::ColorID id) {
 	}
 	return Color();
 }
+
+} // namespace
 
 Ref<Mesh> get_debug_wirecube(DebugColors::ColorID id) {
 	CRASH_COND(g_finalized);
@@ -140,7 +144,7 @@ private:
 	Transform3D _transform;
 	bool _visible = true;
 	Ref<Mesh> _mesh;
-	zylann::DirectMeshInstance _mesh_instance;
+	DirectMeshInstance _mesh_instance;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -151,7 +155,7 @@ DebugRenderer::~DebugRenderer() {
 
 void DebugRenderer::clear() {
 	for (auto it = _items.begin(); it != _items.end(); ++it) {
-		memdelete(*it);
+		ZN_DELETE(*it);
 	}
 	_items.clear();
 	_mm_renderer.clear();
@@ -287,4 +291,4 @@ void DebugMultiMeshRenderer::clear() {
 	}
 }
 
-} // namespace zylann
+} // namespace zylann::godot

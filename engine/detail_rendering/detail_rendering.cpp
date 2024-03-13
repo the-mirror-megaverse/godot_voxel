@@ -13,7 +13,9 @@
 
 namespace zylann::voxel {
 
-static void dilate_normalmap(Span<Vector3f> normals, Vector2i size) {
+namespace {
+
+void dilate_normalmap(Span<Vector3f> normals, Vector2i size) {
 	ZN_PROFILE_SCOPE();
 
 	static const int s_dx[4] = { -1, 1, 0, 0 };
@@ -23,7 +25,7 @@ static void dilate_normalmap(Span<Vector3f> normals, Vector2i size) {
 		unsigned int loc;
 		Vector3f normal;
 	};
-	static thread_local std::vector<NewNormal> tls_new_normals;
+	static thread_local StdVector<NewNormal> tls_new_normals;
 	tls_new_normals.clear();
 
 	unsigned int loc = 0;
@@ -58,6 +60,8 @@ static void dilate_normalmap(Span<Vector3f> normals, Vector2i size) {
 		normals[nn.loc] = nn.normal;
 	}
 }
+
+} // namespace
 
 DetailTextureData::Tile compute_tile_info(
 		const CurrentCellInfo &cell_info, Span<const Vector3f> mesh_normals, Span<const int> mesh_indices) {
@@ -176,8 +180,7 @@ void query_sdf_with_edits(VoxelGenerator &generator, const VoxelModifierStack &m
 	ZN_PROFILE_SCOPE();
 
 	// TODO Get scale properly
-	const float sdf_scale =
-			VoxelBufferInternal::get_sdf_quantization_scale(VoxelBufferInternal::DEFAULT_SDF_CHANNEL_DEPTH);
+	const float sdf_scale = VoxelBuffer::get_sdf_quantization_scale(VoxelBuffer::DEFAULT_SDF_CHANNEL_DEPTH);
 	const float sdf_scale_inv = 1.f / sdf_scale;
 
 	VoxelDataGrid::LockRead rlock(grid);
@@ -194,7 +197,7 @@ void query_sdf_with_edits(VoxelGenerator &generator, const VoxelModifierStack &m
 		FixedArray<uint8_t, 8> i_gen;
 		unsigned int gen_count = 0;
 
-		const VoxelBufferInternal::ChannelId channel = VoxelBufferInternal::CHANNEL_SDF;
+		const VoxelBuffer::ChannelId channel = VoxelBuffer::CHANNEL_SDF;
 
 		const Vector3i posi0 = math::floor_to_int(posf);
 		unsigned int i = 0;
@@ -313,7 +316,7 @@ inline void query_sdf(VoxelGenerator &generator, const VoxelDataGrid *edited_vox
 		// Generator only.
 
 		// Note, these samples are not scaled since we are working with floats instead of encoded buffer values.
-		generator.generate_series(query_x_buffer, query_y_buffer, query_z_buffer, VoxelBufferInternal::CHANNEL_SDF,
+		generator.generate_series(query_x_buffer, query_y_buffer, query_z_buffer, VoxelBuffer::CHANNEL_SDF,
 				query_sdf_buffer, query_min_pos, query_max_pos);
 
 		if (modifiers != nullptr) {
@@ -399,11 +402,11 @@ void compute_detail_texture_data(ICellIterator &cell_iterator, Span<const Vector
 		Vector3f direction;
 		direction[az] = 1.f;
 
-		static thread_local std::vector<Vector2i> tls_tile_sample_positions;
+		static thread_local StdVector<Vector2i> tls_tile_sample_positions;
 		tls_tile_sample_positions.clear();
 		tls_tile_sample_positions.reserve(math::squared(tile_resolution));
 
-		static thread_local std::vector<uint8_t> tls_tile_sample_triangle_index;
+		static thread_local StdVector<uint8_t> tls_tile_sample_triangle_index;
 		tls_tile_sample_triangle_index.clear();
 		tls_tile_sample_triangle_index.reserve(math::squared(tile_resolution));
 
@@ -414,10 +417,10 @@ void compute_detail_texture_data(ICellIterator &cell_iterator, Span<const Vector
 		// (x,   y,   z+s)
 		const unsigned int max_buffer_size = math::squared(tile_resolution) * 4;
 
-		static thread_local std::vector<float> tls_sdf_buffer;
-		static thread_local std::vector<float> tls_x_buffer;
-		static thread_local std::vector<float> tls_y_buffer;
-		static thread_local std::vector<float> tls_z_buffer;
+		static thread_local StdVector<float> tls_sdf_buffer;
+		static thread_local StdVector<float> tls_x_buffer;
+		static thread_local StdVector<float> tls_y_buffer;
+		static thread_local StdVector<float> tls_z_buffer;
 		tls_sdf_buffer.clear();
 		tls_x_buffer.clear();
 		tls_y_buffer.clear();
@@ -512,7 +515,7 @@ void compute_detail_texture_data(ICellIterator &cell_iterator, Span<const Vector
 					cell_origin_world + Vector3f(cell_size));
 		}
 
-		static thread_local std::vector<Vector3f> tls_tile_normals;
+		static thread_local StdVector<Vector3f> tls_tile_normals;
 		tls_tile_normals.clear();
 		tls_tile_normals.resize(math::squared(tile_resolution));
 
@@ -607,7 +610,7 @@ void compute_detail_texture_data(ICellIterator &cell_iterator, Span<const Vector
 	}
 }
 
-Ref<Image> store_lookup_to_image(const std::vector<DetailTextureData::Tile> &tiles, Vector3i block_size) {
+Ref<Image> store_lookup_to_image(const StdVector<DetailTextureData::Tile> &tiles, Vector3i block_size) {
 	ZN_PROFILE_SCOPE();
 
 	const unsigned int sqri = get_square_grid_size_from_item_count(Vector3iUtil::get_volume(block_size));
@@ -649,7 +652,7 @@ Ref<Image> store_lookup_to_image(const std::vector<DetailTextureData::Tile> &til
 
 #ifdef VOXEL_VIRTUAL_TEXTURE_USE_TEXTURE_ARRAY
 
-Vector<Ref<Image>> store_atlas_to_image_array(const std::vector<uint8_t> normals, unsigned int tile_resolution,
+Vector<Ref<Image>> store_atlas_to_image_array(const StdVector<uint8_t> &normals, unsigned int tile_resolution,
 		unsigned int tile_count, bool octahedral_encoding) {
 	ZN_PROFILE_SCOPE();
 
@@ -679,7 +682,7 @@ Vector<Ref<Image>> store_atlas_to_image_array(const std::vector<uint8_t> normals
 
 #endif
 
-Ref<Image> store_atlas_to_image(const std::vector<uint8_t> &normals, unsigned int tile_resolution,
+Ref<Image> store_atlas_to_image(const StdVector<uint8_t> &normals, unsigned int tile_resolution,
 		unsigned int tile_count, bool octahedral_encoding) {
 	ZN_PROFILE_SCOPE();
 

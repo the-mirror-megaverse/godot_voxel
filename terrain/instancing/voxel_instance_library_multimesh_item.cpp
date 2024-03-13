@@ -14,7 +14,7 @@ const char *VoxelInstanceLibraryMultiMeshItem::SCENE_SETTINGS_GROUP_NAME = "Scen
 
 namespace {
 
-Array serialize_collision_shape_infos(const std::vector<VoxelInstanceLibraryMultiMeshItem::CollisionShapeInfo> &infos) {
+Array serialize_collision_shape_infos(const StdVector<VoxelInstanceLibraryMultiMeshItem::CollisionShapeInfo> &infos) {
 	Array a;
 	for (unsigned int i = 0; i < infos.size(); ++i) {
 		const VoxelInstanceLibraryMultiMeshItem::CollisionShapeInfo &info = infos[i];
@@ -28,7 +28,7 @@ Array serialize_collision_shape_infos(const std::vector<VoxelInstanceLibraryMult
 }
 
 bool deserialize_collision_shape_infos(
-		Array a, std::vector<VoxelInstanceLibraryMultiMeshItem::CollisionShapeInfo> &out_infos) {
+		Array a, StdVector<VoxelInstanceLibraryMultiMeshItem::CollisionShapeInfo> &out_infos) {
 	ERR_FAIL_COND_V(a.size() % 2 != 0, false);
 
 	for (int i = 0; i < a.size(); i += 2) {
@@ -44,7 +44,7 @@ bool deserialize_collision_shape_infos(
 	return false;
 }
 
-TypedArray<StringName> serialize_group_names(const std::vector<StringName> &names) {
+TypedArray<StringName> serialize_group_names(const StdVector<StringName> &names) {
 	TypedArray<StringName> a;
 	a.resize(names.size());
 	int i = 0;
@@ -55,7 +55,7 @@ TypedArray<StringName> serialize_group_names(const std::vector<StringName> &name
 	return a;
 }
 
-void deserialize_group_names(const Array &src, std::vector<StringName> &dst) {
+void deserialize_group_names(const Array &src, StdVector<StringName> &dst) {
 	dst.reserve(src.size());
 	for (int i = 0; i < src.size(); ++i) {
 		StringName name = src[i];
@@ -247,9 +247,9 @@ void VoxelInstanceLibraryMultiMeshItem::_get_property_list(List<PropertyInfo> *p
 		p_list->push_back(PropertyInfo(Variant::INT, "scene_render_layer", PROPERTY_HINT_LAYERS_3D_RENDER, "",
 				PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 		p_list->push_back(PropertyInfo(Variant::INT, "scene_cast_shadow", PROPERTY_HINT_ENUM,
-				CAST_SHADOW_ENUM_HINT_STRING, PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
-		p_list->push_back(PropertyInfo(Variant::INT, "scene_gi_mode", PROPERTY_HINT_ENUM, GI_MODE_ENUM_HINT_STRING,
-				PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
+				godot::CAST_SHADOW_ENUM_HINT_STRING, PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
+		p_list->push_back(PropertyInfo(Variant::INT, "scene_gi_mode", PROPERTY_HINT_ENUM,
+				godot::GI_MODE_ENUM_HINT_STRING, PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 		p_list->push_back(PropertyInfo(Variant::INT, "scene_collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS, "",
 				PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY));
 		p_list->push_back(PropertyInfo(Variant::INT, "scene_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS, "",
@@ -322,7 +322,9 @@ bool VoxelInstanceLibraryMultiMeshItem::_get(const StringName &p_name, Variant &
 // 	return false;
 // }
 
-static RenderingServer::ShadowCastingSetting node_to_visual_server_enum(GeometryInstance3D::ShadowCastingSetting v) {
+namespace {
+
+RenderingServer::ShadowCastingSetting node_to_visual_server_enum(GeometryInstance3D::ShadowCastingSetting v) {
 	switch (v) {
 		case GeometryInstance3D::SHADOW_CASTING_SETTING_OFF:
 			return RenderingServer::SHADOW_CASTING_SETTING_OFF;
@@ -342,7 +344,7 @@ static RenderingServer::ShadowCastingSetting node_to_visual_server_enum(Geometry
 	}
 }
 
-static bool setup_from_template(Node *root, VoxelInstanceLibraryMultiMeshItem::Settings &settings) {
+bool setup_from_template(Node *root, VoxelInstanceLibraryMultiMeshItem::Settings &settings) {
 	struct L {
 		static unsigned int get_lod_index_from_name(const String &name) {
 			if (name.ends_with("LOD0")) {
@@ -396,10 +398,12 @@ static bool setup_from_template(Node *root, VoxelInstanceLibraryMultiMeshItem::S
 		}
 	}
 
-	get_node_groups(*root, settings.group_names);
+	godot::get_node_groups(*root, settings.group_names);
 
 	return true;
 }
+
+} // namespace
 
 #if defined(ZN_GODOT)
 void VoxelInstanceLibraryMultiMeshItem::setup_from_template(Node *root) {
@@ -499,7 +503,7 @@ Array VoxelInstanceLibraryMultiMeshItem::_b_get_collision_shapes() const {
 
 PackedFloat32Array VoxelInstanceLibraryMultiMeshItem::_b_get_mesh_lod_distance_ratios() const {
 	PackedFloat32Array ratios;
-	copy_to(ratios, to_span(_mesh_lod_max_distance_ratios));
+	godot::copy_to(ratios, to_span(_mesh_lod_max_distance_ratios));
 	return ratios;
 }
 
@@ -510,7 +514,7 @@ void VoxelInstanceLibraryMultiMeshItem::_b_set_mesh_lod_distance_ratios(PackedFl
 	if (!is_in_range(to_span(ratios), MIN_DISTANCE_RATIO, MAX_DISTANCE_RATIO)) {
 		ZN_PRINT_ERROR("LOD distance ratios are not in usual range");
 	}
-	copy_to(to_span(_mesh_lod_max_distance_ratios), ratios);
+	godot::copy_to(to_span(_mesh_lod_max_distance_ratios), ratios);
 }
 
 void VoxelInstanceLibraryMultiMeshItem::_bind_methods() {
@@ -620,11 +624,11 @@ void VoxelInstanceLibraryMultiMeshItem::_bind_methods() {
 						 Material::get_class_static()),
 			"set_material_override", "get_material_override");
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "cast_shadow", PROPERTY_HINT_ENUM, CAST_SHADOW_ENUM_HINT_STRING),
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "cast_shadow", PROPERTY_HINT_ENUM, godot::CAST_SHADOW_ENUM_HINT_STRING),
 			"set_cast_shadows_setting", "get_cast_shadows_setting");
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "gi_mode", PROPERTY_HINT_ENUM, GI_MODE_ENUM_HINT_STRING), "set_gi_mode",
-			"get_gi_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "gi_mode", PROPERTY_HINT_ENUM, godot::GI_MODE_ENUM_HINT_STRING),
+			"set_gi_mode", "get_gi_mode");
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer",
 			"get_collision_layer");

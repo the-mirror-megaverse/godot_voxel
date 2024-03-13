@@ -1,6 +1,6 @@
 #include "voxel_generator_graph.h"
 #include "../../constants/voxel_string_names.h"
-#include "../../storage/voxel_buffer_internal.h"
+#include "../../storage/voxel_buffer.h"
 #include "../../util/containers/container_funcs.h"
 #include "../../util/expression_parser.h"
 #include "../../util/godot/classes/engine.h"
@@ -80,14 +80,14 @@ int VoxelGeneratorGraph::get_used_channels_mask() const {
 	}
 	int mask = 0;
 	if (runtime_ptr->sdf_output_index != -1) {
-		mask |= (1 << VoxelBufferInternal::CHANNEL_SDF);
+		mask |= (1 << VoxelBuffer::CHANNEL_SDF);
 	}
 	if (runtime_ptr->type_output_index != -1) {
-		mask |= (1 << VoxelBufferInternal::CHANNEL_TYPE);
+		mask |= (1 << VoxelBuffer::CHANNEL_TYPE);
 	}
 	if (runtime_ptr->weight_outputs_count > 0 || runtime_ptr->single_texture_output_index != -1) {
-		mask |= (1 << VoxelBufferInternal::CHANNEL_INDICES);
-		mask |= (1 << VoxelBufferInternal::CHANNEL_WEIGHTS);
+		mask |= (1 << VoxelBuffer::CHANNEL_INDICES);
+		mask |= (1 << VoxelBuffer::CHANNEL_WEIGHTS);
 	}
 	return mask;
 }
@@ -128,7 +128,7 @@ bool VoxelGeneratorGraph::is_using_xz_caching() const {
 // Instead, we could only generate them near zero-crossings, because this is where materials will be seen.
 // The problem is that it's harder to manage at the moment, to support edited blocks and LOD...
 void VoxelGeneratorGraph::gather_indices_and_weights(Span<const WeightOutput> weight_outputs,
-		const pg::Runtime::State &state, Vector3i rmin, Vector3i rmax, int ry, VoxelBufferInternal &out_voxel_buffer,
+		const pg::Runtime::State &state, Vector3i rmin, Vector3i rmax, int ry, VoxelBuffer &out_voxel_buffer,
 		FixedArray<uint8_t, 4> spare_indices) {
 	ZN_PROFILE_SCOPE();
 
@@ -165,8 +165,8 @@ void VoxelGeneratorGraph::gather_indices_and_weights(Span<const WeightOutput> we
 				const uint16_t encoded_weights =
 						encode_weights_to_packed_u16_lossy(weights[0], weights[1], weights[2], weights[3]);
 				// TODO Flatten this further?
-				out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBufferInternal::CHANNEL_INDICES);
-				out_voxel_buffer.set_voxel(encoded_weights, rx, ry, rz, VoxelBufferInternal::CHANNEL_WEIGHTS);
+				out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBuffer::CHANNEL_INDICES);
+				out_voxel_buffer.set_voxel(encoded_weights, rx, ry, rz, VoxelBuffer::CHANNEL_WEIGHTS);
 				++value_index;
 			}
 		}
@@ -188,8 +188,8 @@ void VoxelGeneratorGraph::gather_indices_and_weights(Span<const WeightOutput> we
 				const uint16_t encoded_weights =
 						encode_weights_to_packed_u16_lossy(weights[0], weights[1], weights[2], weights[3]);
 				// TODO Flatten this further?
-				out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBufferInternal::CHANNEL_INDICES);
-				out_voxel_buffer.set_voxel(encoded_weights, rx, ry, rz, VoxelBufferInternal::CHANNEL_WEIGHTS);
+				out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBuffer::CHANNEL_INDICES);
+				out_voxel_buffer.set_voxel(encoded_weights, rx, ry, rz, VoxelBuffer::CHANNEL_WEIGHTS);
 				++value_index;
 			}
 		}
@@ -233,36 +233,54 @@ void VoxelGeneratorGraph::gather_indices_and_weights(Span<const WeightOutput> we
 				const uint16_t encoded_weights =
 						encode_weights_to_packed_u16_lossy(weights[0], weights[1], weights[2], weights[3]);
 				// TODO Flatten this further?
-				out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBufferInternal::CHANNEL_INDICES);
-				out_voxel_buffer.set_voxel(encoded_weights, rx, ry, rz, VoxelBufferInternal::CHANNEL_WEIGHTS);
+				out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBuffer::CHANNEL_INDICES);
+				out_voxel_buffer.set_voxel(encoded_weights, rx, ry, rz, VoxelBuffer::CHANNEL_WEIGHTS);
 				++value_index;
 			}
 		}
 	}
 }
 
+namespace {
+
+constexpr inline uint16_t make_encoded_weights_for_single_texture() {
+	return encode_weights_to_packed_u16_lossy(255, 0, 0, 0);
+}
+
+constexpr inline uint16_t make_encoded_indices_for_single_texture(uint8_t index) {
+	// Make sure other indices are different so the weights associated with them don't override the first
+	// index's weight.
+	const uint8_t index1 = (index + 1) & 0xf;
+	const uint8_t index2 = (index + 2) & 0xf;
+	const uint8_t index3 = (index + 3) & 0xf;
+	const uint16_t encoded_indices = encode_indices_to_packed_u16(index, index1, index2, index3);
+	return encoded_indices;
+	// Note: an alternative would be to snap indices so that the first one is multiple of 4 and following ones are
+	// consecutive. That would minimize the changes in indices layout while keeping them sorted, which could in turn
+	// reduce the amount of seams the mesher might have to make. However it needs to involve weights too instead of
+	// assuming the relevant slot will be the first one. Haven't done that for now as it's not high priority, and it's
+	// likely for the format to change to become simpler instead
+}
+
 // TODO Optimization: this is a simplified output using a complex system.
 // We should implement a texturing system that knows each voxel has a single texture.
 void gather_indices_and_weights_from_single_texture(unsigned int output_buffer_index, const pg::Runtime::State &state,
-		Vector3i rmin, Vector3i rmax, int ry, VoxelBufferInternal &out_voxel_buffer) {
+		Vector3i rmin, Vector3i rmax, int ry, VoxelBuffer &out_voxel_buffer) {
 	ZN_PROFILE_SCOPE();
 
 	const pg::Runtime::Buffer &buffer = state.get_buffer(output_buffer_index);
 	Span<const float> buffer_data = Span<const float>(buffer.data, buffer.size);
 
 	// TODO Should not really be here, but may work. Left here for now so all code for this is in one place
-	const uint16_t encoded_weights = encode_weights_to_packed_u16_lossy(255, 0, 0, 0);
-	out_voxel_buffer.clear_channel(VoxelBufferInternal::CHANNEL_WEIGHTS, encoded_weights);
+	const uint16_t encoded_weights = make_encoded_weights_for_single_texture();
+	out_voxel_buffer.clear_channel(VoxelBuffer::CHANNEL_WEIGHTS, encoded_weights);
 
 	unsigned int value_index = 0;
 	for (int rz = rmin.z; rz < rmax.z; ++rz) {
 		for (int rx = rmin.x; rx < rmax.x; ++rx) {
 			const uint8_t index = math::clamp(int(Math::round(buffer_data[value_index])), 0, 15);
-			// Make sure other indices are different so the weights associated with them don't override the first
-			// index's weight
-			const uint8_t other_index = (index == 0 ? 1 : 0);
-			const uint16_t encoded_indices = encode_indices_to_packed_u16(index, other_index, other_index, other_index);
-			out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBufferInternal::CHANNEL_INDICES);
+			const uint16_t encoded_indices = make_encoded_indices_for_single_texture(index);
+			out_voxel_buffer.set_voxel(encoded_indices, rx, ry, rz, VoxelBuffer::CHANNEL_INDICES);
 			++value_index;
 		}
 	}
@@ -282,12 +300,11 @@ void fill_zx_sdf_slice(Span<Data_T> channel_data, float sdf_scale, Vector3i rmin
 	}
 }
 
-static void fill_zx_sdf_slice(const pg::Runtime::Buffer &sdf_buffer, VoxelBufferInternal &out_buffer,
-		unsigned int channel, VoxelBufferInternal::Depth channel_depth, float sdf_scale, Vector3i rmin, Vector3i rmax,
-		int ry) {
+void fill_zx_sdf_slice(const pg::Runtime::Buffer &sdf_buffer, VoxelBuffer &out_buffer, unsigned int channel,
+		VoxelBuffer::Depth channel_depth, float sdf_scale, Vector3i rmin, Vector3i rmax, int ry) {
 	ZN_PROFILE_SCOPE_NAMED("Copy SDF to block");
 
-	if (out_buffer.get_channel_compression(channel) != VoxelBufferInternal::COMPRESSION_NONE) {
+	if (out_buffer.get_channel_compression(channel) != VoxelBuffer::COMPRESSION_NONE) {
 		out_buffer.decompress_channel(channel);
 	}
 	Span<uint8_t> channel_bytes;
@@ -297,22 +314,22 @@ static void fill_zx_sdf_slice(const pg::Runtime::Buffer &sdf_buffer, VoxelBuffer
 			Vector3iUtil::get_zxy_index(Vector3i(0, 0, 0), buffer_size);
 
 	switch (channel_depth) {
-		case VoxelBufferInternal::DEPTH_8_BIT:
+		case VoxelBuffer::DEPTH_8_BIT:
 			fill_zx_sdf_slice(
 					channel_bytes, sdf_scale, rmin, rmax, ry, x_stride, sdf_buffer.data, buffer_size, snorm_to_s8);
 			break;
 
-		case VoxelBufferInternal::DEPTH_16_BIT:
+		case VoxelBuffer::DEPTH_16_BIT:
 			fill_zx_sdf_slice(channel_bytes.reinterpret_cast_to<uint16_t>(), sdf_scale, rmin, rmax, ry, x_stride,
 					sdf_buffer.data, buffer_size, snorm_to_s16);
 			break;
 
-		case VoxelBufferInternal::DEPTH_32_BIT:
+		case VoxelBuffer::DEPTH_32_BIT:
 			fill_zx_sdf_slice(channel_bytes.reinterpret_cast_to<float>(), sdf_scale, rmin, rmax, ry, x_stride,
 					sdf_buffer.data, buffer_size, [](float v) { return v; });
 			break;
 
-		case VoxelBufferInternal::DEPTH_64_BIT:
+		case VoxelBuffer::DEPTH_64_BIT:
 			fill_zx_sdf_slice(channel_bytes.reinterpret_cast_to<double>(), sdf_scale, rmin, rmax, ry, x_stride,
 					sdf_buffer.data, buffer_size, [](double v) { return v; });
 			break;
@@ -337,11 +354,11 @@ void fill_zx_integer_slice(Span<Data_T> channel_data, Vector3i rmin, Vector3i rm
 	}
 }
 
-static void fill_zx_integer_slice(const pg::Runtime::Buffer &src_buffer, VoxelBufferInternal &out_buffer,
-		unsigned int channel, VoxelBufferInternal::Depth channel_depth, Vector3i rmin, Vector3i rmax, int ry) {
+void fill_zx_integer_slice(const pg::Runtime::Buffer &src_buffer, VoxelBuffer &out_buffer, unsigned int channel,
+		VoxelBuffer::Depth channel_depth, Vector3i rmin, Vector3i rmax, int ry) {
 	ZN_PROFILE_SCOPE_NAMED("Copy integer data to block");
 
-	if (out_buffer.get_channel_compression(channel) != VoxelBufferInternal::COMPRESSION_NONE) {
+	if (out_buffer.get_channel_compression(channel) != VoxelBuffer::COMPRESSION_NONE) {
 		out_buffer.decompress_channel(channel);
 	}
 	Span<uint8_t> channel_bytes;
@@ -351,21 +368,21 @@ static void fill_zx_integer_slice(const pg::Runtime::Buffer &src_buffer, VoxelBu
 			Vector3iUtil::get_zxy_index(Vector3i(0, 0, 0), buffer_size);
 
 	switch (channel_depth) {
-		case VoxelBufferInternal::DEPTH_8_BIT:
+		case VoxelBuffer::DEPTH_8_BIT:
 			fill_zx_integer_slice<uint8_t>(channel_bytes, rmin, rmax, ry, x_stride, src_buffer.data, buffer_size);
 			break;
 
-		case VoxelBufferInternal::DEPTH_16_BIT:
+		case VoxelBuffer::DEPTH_16_BIT:
 			fill_zx_integer_slice<uint16_t>(channel_bytes.reinterpret_cast_to<uint16_t>(), rmin, rmax, ry, x_stride,
 					src_buffer.data, buffer_size);
 			break;
 
-		case VoxelBufferInternal::DEPTH_32_BIT:
+		case VoxelBuffer::DEPTH_32_BIT:
 			fill_zx_integer_slice<uint32_t>(channel_bytes.reinterpret_cast_to<uint32_t>(), rmin, rmax, ry, x_stride,
 					src_buffer.data, buffer_size);
 			break;
 
-		case VoxelBufferInternal::DEPTH_64_BIT:
+		case VoxelBuffer::DEPTH_64_BIT:
 			fill_zx_integer_slice<uint64_t>(channel_bytes.reinterpret_cast_to<uint64_t>(), rmin, rmax, ry, x_stride,
 					src_buffer.data, buffer_size);
 			break;
@@ -375,6 +392,8 @@ static void fill_zx_integer_slice(const pg::Runtime::Buffer &src_buffer, VoxelBu
 			break;
 	}
 }
+
+} // namespace
 
 VoxelGenerator::Result VoxelGeneratorGraph::generate_block(VoxelGenerator::VoxelQueryData &input) {
 	std::shared_ptr<Runtime> runtime_ptr;
@@ -389,20 +408,20 @@ VoxelGenerator::Result VoxelGeneratorGraph::generate_block(VoxelGenerator::Voxel
 		return result;
 	}
 
-	VoxelBufferInternal &out_buffer = input.voxel_buffer;
+	VoxelBuffer &out_buffer = input.voxel_buffer;
 
 	const Vector3i bs = out_buffer.get_size();
-	const VoxelBufferInternal::ChannelId sdf_channel = VoxelBufferInternal::CHANNEL_SDF;
+	const VoxelBuffer::ChannelId sdf_channel = VoxelBuffer::CHANNEL_SDF;
 	const Vector3i origin = input.origin_in_voxels;
 
 	// TODO This may be shared across the module
 	// Storing voxels is lossy on some depth configurations. They use normalized SDF,
 	// so we must scale the values to make better use of the offered resolution
-	const VoxelBufferInternal::Depth sdf_channel_depth = out_buffer.get_channel_depth(sdf_channel);
-	const float sdf_scale = VoxelBufferInternal::get_sdf_quantization_scale(sdf_channel_depth);
+	const VoxelBuffer::Depth sdf_channel_depth = out_buffer.get_channel_depth(sdf_channel);
+	const float sdf_scale = VoxelBuffer::get_sdf_quantization_scale(sdf_channel_depth);
 
-	const VoxelBufferInternal::ChannelId type_channel = VoxelBufferInternal::CHANNEL_TYPE;
-	const VoxelBufferInternal::Depth type_channel_depth = out_buffer.get_channel_depth(type_channel);
+	const VoxelBuffer::ChannelId type_channel = VoxelBuffer::CHANNEL_TYPE;
+	const VoxelBuffer::Depth type_channel_depth = out_buffer.get_channel_depth(type_channel);
 
 	const int stride = 1 << input.lod;
 
@@ -551,12 +570,11 @@ VoxelGenerator::Result VoxelGeneratorGraph::generate_block(VoxelGenerator::Voxel
 					if (index_range.is_single_value()) {
 						// Make sure other indices are different so the weights associated with them don't override the
 						// first index's weight
-						const int index = int(index_range.min);
-						const uint8_t other_index = (index == 0 ? 1 : 0);
-						const uint16_t encoded_indices =
-								encode_indices_to_packed_u16(index, other_index, other_index, other_index);
-						out_buffer.fill_area(encoded_indices, rmin, rmax, VoxelBufferInternal::CHANNEL_INDICES);
-						out_buffer.fill_area(0x000f, rmin, rmax, VoxelBufferInternal::CHANNEL_WEIGHTS);
+						const int index = static_cast<int>(index_range.min);
+						const uint16_t encoded_indices = make_encoded_indices_for_single_texture(index);
+						const uint16_t encoded_weights = make_encoded_weights_for_single_texture();
+						out_buffer.fill_area(encoded_indices, rmin, rmax, VoxelBuffer::CHANNEL_INDICES);
+						out_buffer.fill_area(encoded_weights, rmin, rmax, VoxelBuffer::CHANNEL_WEIGHTS);
 						single_texture_is_uniform = true;
 					} else {
 						required_outputs[required_outputs_count] = runtime_ptr->single_texture_output_index;
@@ -683,19 +701,19 @@ bool VoxelGeneratorGraph::generate_broad_block(VoxelGenerator::VoxelQueryData &i
 		return true;
 	}
 
-	VoxelBufferInternal &out_buffer = input.voxel_buffer;
+	VoxelBuffer &out_buffer = input.voxel_buffer;
 
 	const Vector3i bs = out_buffer.get_size();
-	const VoxelBufferInternal::ChannelId sdf_channel = VoxelBufferInternal::CHANNEL_SDF;
+	const VoxelBuffer::ChannelId sdf_channel = VoxelBuffer::CHANNEL_SDF;
 	const Vector3i origin = input.origin_in_voxels;
 
 	// TODO This may be shared across the module
 	// Storing voxels is lossy on some depth configurations. They use normalized SDF,
 	// so we must scale the values to make better use of the offered resolution
-	const VoxelBufferInternal::Depth sdf_channel_depth = out_buffer.get_channel_depth(sdf_channel);
-	const float sdf_scale = VoxelBufferInternal::get_sdf_quantization_scale(sdf_channel_depth);
+	const VoxelBuffer::Depth sdf_channel_depth = out_buffer.get_channel_depth(sdf_channel);
+	const float sdf_scale = VoxelBuffer::get_sdf_quantization_scale(sdf_channel_depth);
 
-	const VoxelBufferInternal::ChannelId type_channel = VoxelBufferInternal::CHANNEL_TYPE;
+	const VoxelBuffer::ChannelId type_channel = VoxelBuffer::CHANNEL_TYPE;
 
 	const int stride = 1 << input.lod;
 
@@ -771,10 +789,10 @@ bool VoxelGeneratorGraph::generate_broad_block(VoxelGenerator::VoxelQueryData &i
 			// Make sure other indices are different so the weights associated with them don't override the
 			// first index's weight
 			const int index = int(index_range.min);
-			const uint8_t other_index = (index == 0 ? 1 : 0);
-			const uint16_t encoded_indices = encode_indices_to_packed_u16(index, other_index, other_index, other_index);
-			out_buffer.fill(encoded_indices, VoxelBufferInternal::CHANNEL_INDICES);
-			out_buffer.fill(0x000f, VoxelBufferInternal::CHANNEL_WEIGHTS);
+			const uint16_t encoded_indices = make_encoded_indices_for_single_texture(index);
+			const uint16_t encoded_weights = make_encoded_weights_for_single_texture();
+			out_buffer.fill(encoded_indices, VoxelBuffer::CHANNEL_INDICES);
+			out_buffer.fill(encoded_weights, VoxelBuffer::CHANNEL_WEIGHTS);
 		} else {
 			return false;
 		}
@@ -784,7 +802,9 @@ bool VoxelGeneratorGraph::generate_broad_block(VoxelGenerator::VoxelQueryData &i
 	return true;
 }
 
-static bool has_output_type(
+namespace {
+
+bool has_output_type(
 		const pg::Runtime &runtime, const ProgramGraph &graph, pg::VoxelGraphFunction::NodeTypeID node_type_id) {
 	for (unsigned int other_output_index = 0; other_output_index < runtime.get_output_count(); ++other_output_index) {
 		const pg::Runtime::OutputInfo output = runtime.get_output_info(other_output_index);
@@ -795,6 +815,8 @@ static bool has_output_type(
 	}
 	return false;
 }
+
+} // namespace
 
 pg::CompilationResult VoxelGeneratorGraph::compile(bool debug) {
 	// This is a specialized compilation. We use VoxelGraphFunction for a more precise use case, which is to generate
@@ -1057,11 +1079,11 @@ void VoxelGeneratorGraph::generate_series(Span<const float> positions_x, Span<co
 	int buffer_index;
 	float defval = 0.f;
 	switch (channel) {
-		case VoxelBufferInternal::CHANNEL_SDF:
+		case VoxelBuffer::CHANNEL_SDF:
 			buffer_index = runtime_ptr->sdf_output_buffer_index;
 			defval = 1.f;
 			break;
-		case VoxelBufferInternal::CHANNEL_TYPE:
+		case VoxelBuffer::CHANNEL_TYPE:
 			buffer_index = runtime_ptr->type_output_buffer_index;
 			break;
 		default:
@@ -1159,10 +1181,10 @@ void VoxelGeneratorGraph::bake_sphere_bumpmap(Ref<Image> im, float ref_radius, f
 	// This process would use too much memory if run over the entire image at once,
 	// so we'll subdivide the load in smaller chunks
 	struct ProcessChunk {
-		std::vector<float> x_coords;
-		std::vector<float> y_coords;
-		std::vector<float> z_coords;
-		std::vector<float> in_sdf_cache;
+		StdVector<float> x_coords;
+		StdVector<float> y_coords;
+		StdVector<float> z_coords;
+		StdVector<float> in_sdf_cache;
 		Image &im;
 		const Runtime &runtime_wrapper;
 		pg::Runtime::State &state;
@@ -1260,13 +1282,13 @@ void VoxelGeneratorGraph::bake_sphere_normalmap(Ref<Image> im, float ref_radius,
 	// This process would use too much memory if run over the entire image at once,
 	// so we'll subdivide the load in smaller chunks
 	struct ProcessChunk {
-		std::vector<float> x_coords;
-		std::vector<float> y_coords;
-		std::vector<float> z_coords;
-		std::vector<float> sdf_values_p; // TODO Could be used at the same time to get bump?
-		std::vector<float> sdf_values_px;
-		std::vector<float> sdf_values_py;
-		std::vector<float> in_sdf_cache;
+		StdVector<float> x_coords;
+		StdVector<float> y_coords;
+		StdVector<float> z_coords;
+		StdVector<float> sdf_values_p; // TODO Could be used at the same time to get bump?
+		StdVector<float> sdf_values_px;
+		StdVector<float> sdf_values_py;
+		StdVector<float> in_sdf_cache;
 		Image &im;
 		const Runtime &runtime_wrapper;
 		pg::Runtime::State &state;
@@ -1410,9 +1432,9 @@ bool VoxelGeneratorGraph::get_shader_source(ShaderSourceData &out_data) const {
 	ERR_FAIL_COND_V(_main_function.is_null(), false);
 	const ProgramGraph &graph = _main_function->get_graph();
 
-	std::string code_utf8;
-	std::vector<pg::ShaderParameter> params;
-	std::vector<pg::ShaderOutput> outputs;
+	StdString code_utf8;
+	StdVector<pg::ShaderParameter> params;
+	StdVector<pg::ShaderOutput> outputs;
 	pg::CompilationResult result = pg::generate_shader(graph, _main_function->get_input_definitions(), code_utf8,
 			params, outputs, Span<const pg::VoxelGraphFunction::NodeTypeID>());
 
@@ -1450,34 +1472,65 @@ bool VoxelGeneratorGraph::get_shader_source(ShaderSourceData &out_data) const {
 }
 
 VoxelSingleValue VoxelGeneratorGraph::generate_single(Vector3i position, unsigned int channel) {
-	// TODO Support other channels
+	// This is very slow when used multiple times, so if possible prefer using bulk queries
+
 	VoxelSingleValue v;
 	v.i = 0;
-	if (channel != VoxelBufferInternal::CHANNEL_SDF) {
+	if (channel == VoxelBuffer::CHANNEL_SDF) {
+		std::shared_ptr<const Runtime> runtime_ptr;
+		{
+			RWLockRead rlock(_runtime_lock);
+			runtime_ptr = _runtime;
+		}
+		ERR_FAIL_COND_V(runtime_ptr == nullptr, v);
+		if (runtime_ptr->sdf_output_buffer_index == -1) {
+			return v;
+		}
+
+		QueryInputs<float> inputs(*runtime_ptr, position.x, position.y, position.z, 0.f);
+
+		Cache &cache = get_tls_cache();
+		const pg::Runtime &runtime = runtime_ptr->runtime;
+		runtime.prepare_state(cache.state, 1, false);
+		runtime.generate_single(cache.state, inputs.get(), nullptr);
+		const pg::Runtime::Buffer &buffer = cache.state.get_buffer(runtime_ptr->sdf_output_buffer_index);
+		ERR_FAIL_COND_V(buffer.size == 0, v);
+		ERR_FAIL_COND_V(buffer.data == nullptr, v);
+		v.f = buffer.data[0];
+		return v;
+
+	} else if (channel == VoxelBuffer::CHANNEL_INDICES || channel == VoxelBuffer::CHANNEL_WEIGHTS) {
+		std::shared_ptr<const Runtime> runtime_ptr;
+		{
+			RWLockRead rlock(_runtime_lock);
+			runtime_ptr = _runtime;
+		}
+		ERR_FAIL_COND_V(runtime_ptr == nullptr, v);
+		if (runtime_ptr->single_texture_output_buffer_index == -1) {
+			return v;
+		}
+
+		QueryInputs<float> inputs(*runtime_ptr, position.x, position.y, position.z, 0.f);
+
+		Cache &cache = get_tls_cache();
+		const pg::Runtime &runtime = runtime_ptr->runtime;
+		runtime.prepare_state(cache.state, 1, false);
+		runtime.generate_single(cache.state, inputs.get(), nullptr);
+		const pg::Runtime::Buffer &buffer = cache.state.get_buffer(runtime_ptr->single_texture_output_buffer_index);
+		ERR_FAIL_COND_V(buffer.size == 0, v);
+		ERR_FAIL_COND_V(buffer.data == nullptr, v);
+		const float tex_index = buffer.data[0];
+		if (channel == VoxelBuffer::CHANNEL_INDICES) {
+			v.i = make_encoded_indices_for_single_texture(tex_index);
+		} else {
+			v.i = make_encoded_weights_for_single_texture();
+		}
+		return v;
+
+	} else {
+		// TODO Support other channels
 		return v;
 	}
-	std::shared_ptr<const Runtime> runtime_ptr;
-	{
-		RWLockRead rlock(_runtime_lock);
-		runtime_ptr = _runtime;
-	}
-	ERR_FAIL_COND_V(runtime_ptr == nullptr, v);
-	// TODO Allow return values from other outputs
-	if (runtime_ptr->sdf_output_buffer_index == -1) {
-		return v;
-	}
-
-	QueryInputs<float> inputs(*runtime_ptr, position.x, position.y, position.z, 0.f);
-
-	Cache &cache = get_tls_cache();
-	const pg::Runtime &runtime = runtime_ptr->runtime;
-	runtime.prepare_state(cache.state, 1, false);
-	runtime.generate_single(cache.state, inputs.get(), nullptr);
-	const pg::Runtime::Buffer &buffer = cache.state.get_buffer(runtime_ptr->sdf_output_buffer_index);
-	ERR_FAIL_COND_V(buffer.size == 0, v);
-	ERR_FAIL_COND_V(buffer.data == nullptr, v);
-	v.f = buffer.data[0];
-	return v;
 }
 
 // Note, this wrapper may not be used for main generation tasks.
@@ -1523,7 +1576,7 @@ math::Interval VoxelGeneratorGraph::debug_analyze_range(
 // Debug land
 
 float VoxelGeneratorGraph::debug_measure_microseconds_per_voxel(
-		bool singular, std::vector<NodeProfilingInfo> *node_profiling_info) {
+		bool singular, StdVector<NodeProfilingInfo> *node_profiling_info) {
 	std::shared_ptr<const Runtime> runtime_ptr;
 	{
 		RWLockRead rlock(_runtime_lock);
@@ -1562,10 +1615,10 @@ float VoxelGeneratorGraph::debug_measure_microseconds_per_voxel(
 
 	} else {
 		const unsigned int cube_volume = cube_size * cube_size * cube_size;
-		std::vector<float> src_x;
-		std::vector<float> src_y;
-		std::vector<float> src_z;
-		std::vector<float> src_sdf;
+		StdVector<float> src_x;
+		StdVector<float> src_y;
+		StdVector<float> src_z;
+		StdVector<float> src_sdf;
 		src_x.resize(cube_volume);
 		src_y.resize(cube_volume);
 		src_z.resize(cube_volume);
@@ -1706,7 +1759,7 @@ void VoxelGeneratorGraph::get_configuration_warnings(PackedStringArray &out_warn
 #endif // TOOLS_ENABLED
 
 float VoxelGeneratorGraph::_b_generate_single(Vector3 pos) {
-	return generate_single(math::floor_to_int(pos), VoxelBufferInternal::CHANNEL_SDF).f;
+	return generate_single(math::floor_to_int(pos), VoxelBuffer::CHANNEL_SDF).f;
 }
 
 Vector2 VoxelGeneratorGraph::_b_debug_analyze_range(Vector3 min_pos, Vector3 max_pos) const {

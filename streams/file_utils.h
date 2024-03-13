@@ -3,8 +3,9 @@
 
 #include "../util/godot/classes/file_access.h"
 #include "../util/math/vector3i.h"
+#include "../util/std_string.h"
 
-namespace zylann {
+namespace zylann::godot {
 
 inline Vector3i get_vec3u8(FileAccess &f) {
 	Vector3i v;
@@ -48,13 +49,13 @@ const char *to_string(FileResult res);
 FileResult check_magic_and_version(
 		FileAccess &f, uint8_t expected_version, const char *expected_magic, uint8_t &out_version);
 
-namespace voxel {
-// Specific to voxel because it uses a global lock found only in VoxelServer
-Error check_directory_created_using_file_locker(const std::string &directory_path);
-} // namespace voxel
-
 void insert_bytes(FileAccess &f, size_t count, size_t temp_chunk_size = 512);
 
-} // namespace zylann
+} // namespace zylann::godot
+
+namespace zylann::voxel {
+// Specific to voxel because it uses a global lock found only in VoxelServer
+Error check_directory_created_using_file_locker(const StdString &directory_path);
+} // namespace zylann::voxel
 
 #endif // FILE_UTILS_H

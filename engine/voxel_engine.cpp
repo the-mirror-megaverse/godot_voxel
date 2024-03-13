@@ -89,7 +89,7 @@ VoxelEngine::VoxelEngine(ThreadsConfig threads_config) {
 		// Otherwise I don't feel like there is a point in using one IMO.
 		sampler_state->set_mag_filter(RenderingDevice::SAMPLER_FILTER_LINEAR);
 		sampler_state->set_min_filter(RenderingDevice::SAMPLER_FILTER_LINEAR);
-		_filtering_sampler_rid = sampler_create(*_rendering_device, **sampler_state);
+		_filtering_sampler_rid = zylann::godot::sampler_create(*_rendering_device, **sampler_state);
 
 		_gpu_storage_buffer_pool.set_rendering_device(_rendering_device);
 
@@ -148,7 +148,7 @@ VoxelEngine::~VoxelEngine() {
 		_block_modifier_sphere_shader.clear();
 		_block_modifier_mesh_shader.clear();
 
-		free_rendering_device_rid(*_rendering_device, _filtering_sampler_rid);
+		zylann::godot::free_rendering_device_rid(*_rendering_device, _filtering_sampler_rid);
 		_filtering_sampler_rid = RID();
 
 		if (is_verbose_output_enabled()) {
@@ -171,7 +171,7 @@ void VoxelEngine::wait_and_clear_all_tasks(bool warn) {
 			ZN_PRINT_WARNING("General tasks remain on module cleanup, "
 							 "this could become a problem if they reference scripts");
 		}
-		memdelete(task);
+		ZN_DELETE(task);
 	});
 }
 
@@ -325,7 +325,7 @@ void VoxelEngine::process() {
 	// Receive generation and meshing results
 	_general_thread_pool.dequeue_completed_tasks([](zylann::IThreadedTask *task) {
 		task->apply_result();
-		memdelete(task);
+		ZN_DELETE(task);
 	});
 
 	// Run this after dequeueing threaded tasks, because they can add some to this runner,
@@ -378,7 +378,9 @@ void VoxelEngine::sync_viewers_task_priority_data() {
 	dep.highest_view_distance = max_distance * 2;
 }
 
-static unsigned int debug_get_active_thread_count(const zylann::ThreadedTaskRunner &pool) {
+namespace {
+
+unsigned int debug_get_active_thread_count(const zylann::ThreadedTaskRunner &pool) {
 	unsigned int active_count = 0;
 	for (unsigned int i = 0; i < pool.get_thread_count(); ++i) {
 		zylann::ThreadedTaskRunner::State s = pool.get_thread_debug_state(i);
@@ -389,7 +391,7 @@ static unsigned int debug_get_active_thread_count(const zylann::ThreadedTaskRunn
 	return active_count;
 }
 
-static VoxelEngine::Stats::ThreadPoolStats debug_get_pool_stats(const zylann::ThreadedTaskRunner &pool) {
+VoxelEngine::Stats::ThreadPoolStats debug_get_pool_stats(const zylann::ThreadedTaskRunner &pool) {
 	VoxelEngine::Stats::ThreadPoolStats d;
 	d.tasks = pool.get_debug_remaining_tasks();
 	d.active_threads = debug_get_active_thread_count(pool);
@@ -403,6 +405,8 @@ static VoxelEngine::Stats::ThreadPoolStats debug_get_pool_stats(const zylann::Th
 	return d;
 }
 
+} // namespace
+
 VoxelEngine::Stats VoxelEngine::get_stats() const {
 	Stats s;
 	s.general = debug_get_pool_stats(_general_thread_pool);
@@ -411,30 +415,6 @@ VoxelEngine::Stats VoxelEngine::get_stats() const {
 	s.streaming_tasks = LoadBlockDataTask::debug_get_running_count() + SaveBlockDataTask::debug_get_running_count();
 	s.main_thread_tasks = _time_spread_task_runner.get_pending_count() + _progressive_task_runner.get_pending_count();
 	return s;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-BufferedTaskScheduler::BufferedTaskScheduler() : _thread_id(Thread::get_caller_id()) {}
-
-BufferedTaskScheduler &BufferedTaskScheduler::get_for_current_thread() {
-	static thread_local BufferedTaskScheduler tls_task_scheduler;
-	if (tls_task_scheduler.has_tasks()) {
-		ZN_PRINT_WARNING("Getting BufferedTaskScheduler for a new batch but it already has tasks!");
-	}
-	return tls_task_scheduler;
-}
-
-void BufferedTaskScheduler::flush() {
-	ZN_ASSERT(_thread_id == Thread::get_caller_id());
-	if (_main_tasks.size() > 0) {
-		VoxelEngine::get_singleton().push_async_tasks(to_span(_main_tasks));
-	}
-	if (_io_tasks.size() > 0) {
-		VoxelEngine::get_singleton().push_async_io_tasks(to_span(_io_tasks));
-	}
-	_main_tasks.clear();
-	_io_tasks.clear();
 }
 
 } // namespace zylann::voxel

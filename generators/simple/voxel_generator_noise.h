@@ -1,9 +1,13 @@
 #ifndef VOXEL_GENERATOR_NOISE_H
 #define VOXEL_GENERATOR_NOISE_H
 
+#include "../../storage/voxel_buffer.h"
 #include "../../storage/voxel_buffer_gd.h"
-#include "../../util/godot/classes/noise.h"
+#include "../../util/godot/macros.h"
+#include "../../util/thread/rw_lock.h"
 #include "../voxel_generator.h"
+
+ZN_GODOT_FORWARD_DECLARE(class Noise)
 
 namespace zylann::voxel {
 
@@ -14,8 +18,8 @@ public:
 	VoxelGeneratorNoise();
 	~VoxelGeneratorNoise();
 
-	void set_channel(VoxelBufferInternal::ChannelId p_channel);
-	VoxelBufferInternal::ChannelId get_channel() const;
+	void set_channel(VoxelBuffer::ChannelId p_channel);
+	VoxelBuffer::ChannelId get_channel() const;
 
 	int get_used_channels_mask() const override;
 
@@ -33,15 +37,15 @@ public:
 private:
 	void _on_noise_changed();
 
-	void _b_set_channel(gd::VoxelBuffer::ChannelId p_channel);
-	gd::VoxelBuffer::ChannelId _b_get_channel() const;
+	void _b_set_channel(godot::VoxelBuffer::ChannelId p_channel);
+	godot::VoxelBuffer::ChannelId _b_get_channel() const;
 
 	static void _bind_methods();
 
 	Ref<Noise> _noise;
 
 	struct Parameters {
-		VoxelBufferInternal::ChannelId channel = VoxelBufferInternal::CHANNEL_SDF;
+		VoxelBuffer::ChannelId channel = VoxelBuffer::CHANNEL_SDF;
 		Ref<Noise> noise;
 		float height_start = 0;
 		float height_range = 300;

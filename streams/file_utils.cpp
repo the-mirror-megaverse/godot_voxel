@@ -1,8 +1,9 @@
 #include "file_utils.h"
 #include "../engine/voxel_engine.h"
+#include "../util/containers/std_vector.h"
 #include "../util/godot/classes/directory.h"
 
-namespace zylann {
+namespace zylann::godot {
 
 const char *to_string(FileResult res) {
 	switch (res) {
@@ -47,7 +48,7 @@ FileResult check_magic_and_version(
 	return FILE_OK;
 }
 
-Error check_directory_created(const std::string &p_directory_path) {
+Error check_directory_created(const StdString &p_directory_path) {
 	const String directory_path(p_directory_path.c_str());
 
 	Ref<DirAccess> d = open_directory(directory_path);
@@ -69,13 +70,6 @@ Error check_directory_created(const std::string &p_directory_path) {
 	return OK;
 }
 
-namespace voxel {
-Error check_directory_created_using_file_locker(const std::string &directory_path) {
-	VoxelFileLockerWrite file_wlock(directory_path);
-	return check_directory_created(directory_path);
-}
-} // namespace voxel
-
 // TODO Write tests
 
 // Makes the file bigger to move the half from the current position further,
@@ -95,7 +89,7 @@ void insert_bytes(FileAccess &f, size_t count, size_t temp_chunk_size) {
 
 	const size_t initial_bytes_to_move = prev_file_len - insert_pos;
 	size_t bytes_to_move = initial_bytes_to_move;
-	std::vector<uint8_t> temp;
+	StdVector<uint8_t> temp;
 	size_t src_pos = prev_file_len;
 	size_t dst_pos = f.get_length();
 
@@ -116,4 +110,13 @@ void insert_bytes(FileAccess &f, size_t count, size_t temp_chunk_size) {
 	}
 }
 
-} // namespace zylann
+} // namespace zylann::godot
+
+namespace zylann::voxel {
+
+Error check_directory_created_using_file_locker(const StdString &directory_path) {
+	VoxelFileLockerWrite file_wlock(directory_path);
+	return zylann::godot::check_directory_created(directory_path);
+}
+
+} // namespace zylann::voxel

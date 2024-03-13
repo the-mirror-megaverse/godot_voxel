@@ -1,10 +1,10 @@
 #ifndef ZYLANN_BOX2I_H
 #define ZYLANN_BOX2I_H
 
+#include "../containers/std_vector.h"
 #include "funcs.h"
 #include "vector2i.h"
-#include <iosfwd>
-#include <vector>
+#include "../std_stringstream.h"
 
 namespace zylann {
 
@@ -171,7 +171,7 @@ public:
 
 	// Subtracts another box from the current box.
 	// If any, boxes composing the remaining volume are added to the given vector.
-	inline void difference_to_vec(const Box2i &b, std::vector<Box2i> &output) const {
+	inline void difference_to_vec(const Box2i &b, StdVector<Box2i> &output) const {
 		difference(b, [&output](const Box2i &sub_box) { output.push_back(sub_box); });
 	}
 
@@ -260,7 +260,7 @@ inline bool operator==(const Box2i &a, const Box2i &b) {
 	return a.pos == b.pos && a.size == b.size;
 }
 
-std::stringstream &operator<<(std::stringstream &ss, const Box2i &box);
+StdStringStream &operator<<(StdStringStream &ss, const Box2i &box);
 
 } // namespace zylann
 

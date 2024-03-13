@@ -1,14 +1,13 @@
 #ifndef VOXEL_STREAM_SQLITE_H
 #define VOXEL_STREAM_SQLITE_H
 
+#include "../../util/containers/std_unordered_set.h"
+#include "../../util/containers/std_vector.h"
 #include "../../util/math/vector3i16.h"
 #include "../../util/thread/mutex.h"
 #include "../voxel_block_serializer.h"
 #include "../voxel_stream.h"
 #include "../voxel_stream_cache.h"
-
-#include <unordered_set>
-#include <vector>
 
 namespace zylann::voxel {
 
@@ -47,6 +46,7 @@ public:
 
 	int get_used_channels_mask() const override;
 
+	void flush() override;
 	void flush_cache();
 
 	// Might improve query performance if saved data is very sparse (like when only edited blocks are saved).
@@ -57,11 +57,11 @@ private:
 	void rebuild_key_cache();
 
 	struct BlockKeysCache {
-		FixedArray<std::unordered_set<Vector3i16>, constants::MAX_LOD> lods;
+		FixedArray<StdUnorderedSet<Vector3i16>, constants::MAX_LOD> lods;
 		RWLock rw_lock;
 
 		inline bool contains(Vector3i16 bpos, unsigned int lod_index) const {
-			const std::unordered_set<Vector3i16> &keys = lods[lod_index];
+			const StdUnorderedSet<Vector3i16> &keys = lods[lod_index];
 			RWLockRead rlock(rw_lock);
 			return keys.find(bpos) != keys.end();
 		}
@@ -85,7 +85,7 @@ private:
 		// inline size_t get_memory_usage() const {
 		// 	size_t mem = 0;
 		// 	for (unsigned int i = 0; i < lods.size(); ++i) {
-		// 		const std::unordered_set<Vector3i> &keys = lods[i];
+		// 		const StdUnorderedSet<Vector3i> &keys = lods[i];
 		// 		mem += sizeof(Vector3i) * keys.size();
 		// 	}
 		// 	return mem;
@@ -113,7 +113,7 @@ private:
 	static void _bind_methods();
 
 	String _connection_path;
-	std::vector<VoxelStreamSQLiteInternal *> _connection_pool;
+	StdVector<VoxelStreamSQLiteInternal *> _connection_pool;
 	Mutex _connection_mutex;
 	// This cache stores blocks in memory, and gets flushed to the database when big enough.
 	// This is because save queries are more expensive.

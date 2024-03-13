@@ -1,16 +1,22 @@
 #ifndef VOXEL_STREAM_H
 #define VOXEL_STREAM_H
 
+#include "../util/containers/span.h"
+#include "../util/containers/std_vector.h"
 #include "../util/godot/classes/resource.h"
-#include "../util/memory.h"
+#include "../util/math/vector3.h"
+#include "../util/math/vector3i.h"
+#include "../util/memory/memory.h"
 #include "../util/thread/rw_lock.h"
-#include "instance_data.h"
+
+#include <cstdint>
 
 namespace zylann::voxel {
 
-class VoxelBufferInternal;
+class VoxelBuffer;
+struct InstanceBlockData;
 
-namespace gd {
+namespace godot {
 class VoxelBuffer;
 }
 
@@ -30,7 +36,7 @@ public:
 	VoxelStream();
 	~VoxelStream();
 
-	enum ResultCode {
+	enum ResultCode : uint8_t {
 		// Something went wrong, the request should be aborted
 		RESULT_ERROR,
 		// The block could not be found in the stream. The requester may fallback on the generator.
@@ -42,17 +48,17 @@ public:
 	};
 
 	struct VoxelQueryData {
-		VoxelBufferInternal &voxel_buffer;
-		Vector3i origin_in_voxels;
-		int lod;
+		VoxelBuffer &voxel_buffer;
+		Vector3i position_in_blocks;
+		uint8_t lod_index;
 		// This is currently not used in save queries. Maybe it should?
 		ResultCode result;
 	};
 
 	struct InstancesQueryData {
 		UniquePtr<InstanceBlockData> data;
-		Vector3i position;
-		uint8_t lod;
+		Vector3i position_in_blocks;
+		uint8_t lod_index;
 		ResultCode result;
 	};
 
@@ -79,13 +85,14 @@ public:
 	virtual void save_instance_blocks(Span<InstancesQueryData> p_blocks);
 
 	struct FullLoadingResult {
+		// TODO Perhaps this needs to be decoupled. Not all voxel blocks have instances and vice versa
 		struct Block {
-			std::shared_ptr<VoxelBufferInternal> voxels;
+			std::shared_ptr<VoxelBuffer> voxels;
 			UniquePtr<InstanceBlockData> instances_data;
 			Vector3i position;
 			unsigned int lod;
 		};
-		std::vector<Block> blocks;
+		StdVector<Block> blocks;
 	};
 
 	virtual bool supports_loading_all_blocks() const {
@@ -114,16 +121,24 @@ public:
 	void set_save_generator_output(bool enabled);
 	bool get_save_generator_output() const;
 
+	// If the stream doesn't immediately write data to the filesystem (using a cache to batch I/Os for example), forces
+	// all pending data to be written.
+	// This should not be called frequently if performance is a concern, as it would require much more file I/Os. May be
+	// used if you require all data to be written now. Note that implementations should already do this automatically
+	// when the resource is destroyed or their configuration changes. Some implementations may do nothing if they have
+	// no cache.
+	virtual void flush();
+
 private:
 	static void _bind_methods();
 
-	ResultCode _b_load_voxel_block(Ref<gd::VoxelBuffer> out_buffer, Vector3i origin_in_voxels, int lod);
-	void _b_save_voxel_block(Ref<gd::VoxelBuffer> buffer, Vector3i origin_in_voxels, int lod);
+	ResultCode _b_load_voxel_block(Ref<godot::VoxelBuffer> out_buffer, Vector3i origin_in_voxels, int lod_index);
+	void _b_save_voxel_block(Ref<godot::VoxelBuffer> buffer, Vector3i origin_in_voxels, int lod_index);
 	int _b_get_used_channels_mask() const;
 	Vector3 _b_get_block_size() const;
 	// Deprecated
-	ResultCode _b_emerge_block(Ref<gd::VoxelBuffer> out_buffer, Vector3 origin_in_voxels, int lod);
-	void _b_immerge_block(Ref<gd::VoxelBuffer> buffer, Vector3 origin_in_voxels, int lod);
+	ResultCode _b_emerge_block(Ref<godot::VoxelBuffer> out_buffer, Vector3 origin_in_voxels, int lod_index);
+	void _b_immerge_block(Ref<godot::VoxelBuffer> buffer, Vector3 origin_in_voxels, int lod_index);
 
 	struct Parameters {
 		bool save_generator_output = false;

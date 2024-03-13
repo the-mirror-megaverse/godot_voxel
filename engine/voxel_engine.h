@@ -4,8 +4,11 @@
 #include "../meshers/voxel_mesher.h"
 #include "../streams/instance_data.h"
 #include "../util/containers/slot_map.h"
+#include "../util/containers/std_vector.h"
+#include "../util/godot/classes/rendering_device.h"
 #include "../util/io/file_locker.h"
-#include "../util/memory.h"
+#include "../util/memory/memory.h"
+#include "../util/std_string.h"
 #include "../util/tasks/progressive_task_runner.h"
 #include "../util/tasks/threaded_task_runner.h"
 #include "../util/tasks/time_spread_task_runner.h"
@@ -15,8 +18,6 @@
 #include "gpu/gpu_task_runner.h"
 #include "ids.h"
 #include "priority_dependency.h"
-
-#include "../util/godot/classes/rendering_device.h"
 
 ZN_GODOT_FORWARD_DECLARE(class RenderingDevice);
 #ifdef ZN_GODOT_EXTENSION
@@ -44,13 +45,16 @@ public:
 		// Remaps Mesh surface indices to Mesher material indices. Only used if `has_mesh_resource` is true.
 		// TODO Optimize: candidate for small vector optimization. A big majority of meshes will have a handful of
 		// surfaces, which would fit here without allocating.
-		std::vector<uint16_t> mesh_material_indices;
+		StdVector<uint16_t> mesh_material_indices;
 		// In mesh block coordinates
 		Vector3i position;
 		// TODO Rename lod_index
 		uint8_t lod;
-		// Tells if the mesh resource was built as part of the task. If not, you need to build it on the main thread.
+		// Tells if the mesh resource was built as part of the task. If not, you need to build it on the main thread if
+		// it is needed.
 		bool has_mesh_resource;
+		// Tells if the meshing task was required to build a rendering mesh if possible.
+		bool visual_was_required;
 		// Can be null. Attached to meshing output so it is tracked more easily, because it is baked asynchronously
 		// starting from the mesh task, and it might complete earlier or later than the mesh.
 		std::shared_ptr<DetailTextureOutput> detail_textures;
@@ -66,7 +70,7 @@ public:
 		Type type;
 		// If voxels are null with TYPE_LOADED, it means no block was found in the stream (if any) and no generator task
 		// was scheduled. This is the case when we don't want to cache blocks of generated data.
-		std::shared_ptr<VoxelBufferInternal> voxels;
+		std::shared_ptr<VoxelBuffer> voxels;
 		UniquePtr<InstanceBlockData> instances;
 		Vector3i position;
 		uint8_t lod_index;
@@ -74,7 +78,10 @@ public:
 		bool max_lod_hint;
 		// Blocks with this flag set should not be ignored.
 		// This is used when data streaming is off, all blocks are loaded at once.
+		// TODO Unused?
 		bool initial_load;
+		bool had_instances;
+		bool had_voxels;
 	};
 
 	struct BlockDetailTextureOutput {
@@ -341,7 +348,7 @@ private:
 };
 
 struct VoxelFileLockerRead {
-	VoxelFileLockerRead(const std::string &path) : _path(path) {
+	VoxelFileLockerRead(const StdString &path) : _path(path) {
 		VoxelEngine::get_singleton().get_file_locker().lock_read(path);
 	}
 
@@ -349,11 +356,11 @@ struct VoxelFileLockerRead {
 		VoxelEngine::get_singleton().get_file_locker().unlock(_path);
 	}
 
-	std::string _path;
+	StdString _path;
 };
 
 struct VoxelFileLockerWrite {
-	VoxelFileLockerWrite(const std::string &path) : _path(path) {
+	VoxelFileLockerWrite(const StdString &path) : _path(path) {
 		VoxelEngine::get_singleton().get_file_locker().lock_write(path);
 	}
 
@@ -361,44 +368,7 @@ struct VoxelFileLockerWrite {
 		VoxelEngine::get_singleton().get_file_locker().unlock(_path);
 	}
 
-	std::string _path;
-};
-
-// Helper class to store tasks and schedule them in a single batch
-class BufferedTaskScheduler {
-public:
-	static BufferedTaskScheduler &get_for_current_thread();
-
-	inline void push_main_task(IThreadedTask *task) {
-		_main_tasks.push_back(task);
-	}
-
-	inline void push_io_task(IThreadedTask *task) {
-		_io_tasks.push_back(task);
-	}
-
-	inline size_t get_main_count() const {
-		return _main_tasks.size();
-	}
-
-	inline size_t get_io_count() const {
-		return _io_tasks.size();
-	}
-
-	void flush();
-
-	// No destructor! This does not take ownership, it is only a helper. Flush should be called after each use.
-
-private:
-	BufferedTaskScheduler();
-
-	bool has_tasks() const {
-		return _main_tasks.size() > 0 || _io_tasks.size() > 0;
-	}
-
-	std::vector<IThreadedTask *> _main_tasks;
-	std::vector<IThreadedTask *> _io_tasks;
-	Thread::ID _thread_id;
+	StdString _path;
 };
 
 } // namespace zylann::voxel

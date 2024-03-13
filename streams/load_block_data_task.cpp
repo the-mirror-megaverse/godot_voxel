@@ -1,7 +1,7 @@
 #include "load_block_data_task.h"
 #include "../engine/voxel_engine.h"
 #include "../generators/generate_block_task.h"
-#include "../storage/voxel_buffer_internal.h"
+#include "../storage/voxel_buffer.h"
 #include "../util/dstack.h"
 #include "../util/io/log.h"
 #include "../util/profiling.h"
@@ -15,7 +15,7 @@ std::atomic_int g_debug_load_block_tasks_count = { 0 };
 LoadBlockDataTask::LoadBlockDataTask(VolumeID p_volume_id, Vector3i p_block_pos, uint8_t p_lod, uint8_t p_block_size,
 		bool p_request_instances, std::shared_ptr<StreamingDependency> p_stream_dependency,
 		PriorityDependency p_priority_dependency, bool generate_cache_data, bool generator_use_gpu,
-		const std::shared_ptr<VoxelData> &vdata) :
+		const std::shared_ptr<VoxelData> &vdata, TaskCancellationToken cancellation_token) :
 		_priority_dependency(p_priority_dependency),
 		_position(p_block_pos),
 		_volume_id(p_volume_id),
@@ -26,7 +26,8 @@ LoadBlockDataTask::LoadBlockDataTask(VolumeID p_volume_id, Vector3i p_block_pos,
 		_generator_use_gpu(generator_use_gpu),
 		//_request_voxels(true),
 		_stream_dependency(p_stream_dependency),
-		_voxel_data(vdata) {
+		_voxel_data(vdata),
+		_cancellation_token(cancellation_token) {
 	//
 	++g_debug_load_block_tasks_count;
 }
@@ -47,10 +48,8 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext &ctx) {
 	Ref<VoxelStream> stream = _stream_dependency->stream;
 	CRASH_COND(stream.is_null());
 
-	const Vector3i origin_in_voxels = (_position << _lod_index) * _block_size;
-
 	ERR_FAIL_COND(_voxels != nullptr);
-	_voxels = make_shared_instance<VoxelBufferInternal>();
+	_voxels = make_shared_instance<VoxelBuffer>();
 	_voxels->create(_block_size, _block_size, _block_size);
 
 	// TODO We should consider batching this again, but it needs to be done carefully.
@@ -59,7 +58,7 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext &ctx) {
 
 	// TODO Assign max_lod_hint when available
 
-	VoxelStream::VoxelQueryData voxel_query_data{ *_voxels, origin_in_voxels, _lod_index, VoxelStream::RESULT_ERROR };
+	VoxelStream::VoxelQueryData voxel_query_data{ *_voxels, _position, _lod_index, VoxelStream::RESULT_ERROR };
 	stream->load_voxel_block(voxel_query_data);
 
 	if (voxel_query_data.result == VoxelStream::RESULT_ERROR) {
@@ -101,8 +100,8 @@ void LoadBlockDataTask::run(zylann::ThreadedTaskContext &ctx) {
 		ERR_FAIL_COND(_instances != nullptr);
 
 		VoxelStream::InstancesQueryData instances_query;
-		instances_query.lod = _lod_index;
-		instances_query.position = _position;
+		instances_query.lod_index = _lod_index;
+		instances_query.position_in_blocks = _position;
 		stream->load_instance_blocks(Span<VoxelStream::InstancesQueryData>(&instances_query, 1));
 
 		if (instances_query.result == VoxelStream::RESULT_ERROR) {
@@ -127,7 +126,13 @@ TaskPriority LoadBlockDataTask::get_priority() {
 }
 
 bool LoadBlockDataTask::is_cancelled() {
-	return !_stream_dependency->valid || _too_far;
+	if (_stream_dependency->valid == false) {
+		return true;
+	}
+	if (_cancellation_token.is_valid()) {
+		return _cancellation_token.is_cancelled();
+	}
+	return _too_far;
 }
 
 void LoadBlockDataTask::apply_result() {

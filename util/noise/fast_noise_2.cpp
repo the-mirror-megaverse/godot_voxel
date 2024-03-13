@@ -1,4 +1,5 @@
 #include "fast_noise_2.h"
+#include "../containers/std_vector.h"
 #include "../math/funcs.h"
 #include "../math/vector3.h"
 #include <core/io/image.h>
@@ -313,6 +314,12 @@ void FastNoise2::get_noise_2d_series(Span<const float> src_x, Span<const float> 
 		FixedArray<float, MIN_BUFFER_SIZE> x;
 		FixedArray<float, MIN_BUFFER_SIZE> y;
 		FixedArray<float, MIN_BUFFER_SIZE> n;
+		// We should not need to spend time initializing these arrays because they are just backing memory. We write
+		// over them and FN2 will write over the result anyways. But if we don't do this, GCC is not happy because all
+		// warnings are enabled and treated as errors...
+		fill(x, 0.f);
+		fill(y, 0.f);
+		fill(n, 0.f);
 		for (unsigned int i = 0; i < src_x.size(); ++i) {
 			x[i] = src_x[i];
 		}
@@ -342,6 +349,13 @@ void FastNoise2::get_noise_3d_series(
 		FixedArray<float, MIN_BUFFER_SIZE> y;
 		FixedArray<float, MIN_BUFFER_SIZE> z;
 		FixedArray<float, MIN_BUFFER_SIZE> n;
+		// We should not need to spend time initializing these arrays because they are just backing memory. We write
+		// over them and FN2 will write over the result anyways. But if we don't do this, GCC is not happy because all
+		// warnings are enabled and treated as errors...
+		fill(x, 0.f);
+		fill(y, 0.f);
+		fill(z, 0.f);
+		fill(n, 0.f);
 		for (unsigned int i = 0; i < src_x.size(); ++i) {
 			x[i] = src_x[i];
 		}
@@ -392,7 +406,7 @@ void FastNoise2::generate_image(Ref<Image> image, bool tileable) const {
 	ERR_FAIL_COND(!is_valid());
 	ERR_FAIL_COND(image.is_null());
 
-	std::vector<float> buffer;
+	StdVector<float> buffer;
 	buffer.resize(image->get_width() * image->get_height());
 
 	if (tileable) {
@@ -496,7 +510,7 @@ void FastNoise2::update_generator() {
 		fractal_node->SetGain(_fractal_gain);
 		fractal_node->SetLacunarity(_fractal_lacunarity);
 		fractal_node->SetOctaveCount(_fractal_octaves);
-		//fractal_node->SetWeightedStrength(_fractal_weighted_strength);
+		// fractal_node->SetWeightedStrength(_fractal_weighted_strength);
 		fractal_node->SetSource(generator_node);
 		generator_node = fractal_node;
 	}

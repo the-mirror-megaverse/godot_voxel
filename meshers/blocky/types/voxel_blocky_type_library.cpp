@@ -50,8 +50,8 @@ void VoxelBlockyTypeLibrary::bake() {
 	_indexed_materials.clear();
 	_baked_data.models.clear();
 
-	std::vector<VoxelBlockyModel::BakedData> baked_models;
-	std::vector<VoxelBlockyType::VariantKey> keys;
+	StdVector<VoxelBlockyModel::BakedData> baked_models;
+	StdVector<VoxelBlockyType::VariantKey> keys;
 	VoxelBlockyModel::MaterialIndexer material_indexer{ _indexed_materials };
 
 	_baked_data.models.resize(_id_map.size());
@@ -59,9 +59,9 @@ void VoxelBlockyTypeLibrary::bake() {
 	for (size_t i = 0; i < _types.size(); ++i) {
 		Ref<VoxelBlockyType> type = _types[i];
 		ZN_ASSERT_CONTINUE_MSG(
-				type.is_valid(), format("{} at index {} is null", get_class_name_str<VoxelBlockyType>(), i));
+				type.is_valid(), format("{} at index {} is null", godot::get_class_name_str<VoxelBlockyType>(), i));
 
-		type->bake(baked_models, keys, material_indexer, nullptr);
+		type->bake(baked_models, keys, material_indexer, nullptr, get_bake_tangents());
 
 		VoxelID id;
 		id.type_name = type->get_unique_name();
@@ -106,8 +106,8 @@ void VoxelBlockyTypeLibrary::update_id_map() {
 	update_id_map(_id_map, nullptr);
 }
 
-void VoxelBlockyTypeLibrary::update_id_map(std::vector<VoxelID> &id_map, std::vector<uint16_t> *used_ids) const {
-	std::vector<VoxelBlockyType::VariantKey> keys;
+void VoxelBlockyTypeLibrary::update_id_map(StdVector<VoxelID> &id_map, StdVector<uint16_t> *used_ids) const {
+	StdVector<VoxelBlockyType::VariantKey> keys;
 
 	for (size_t i = 0; i < _types.size(); ++i) {
 		Ref<VoxelBlockyType> type = _types[i];
@@ -147,14 +147,14 @@ void VoxelBlockyTypeLibrary::get_configuration_warnings(PackedStringArray &out_w
 	ZN_PROFILE_SCOPE();
 
 	// Check null indices
-	std::vector<unsigned int> null_indices;
+	StdVector<unsigned int> null_indices;
 	for (unsigned int i = 0; i < _types.size(); ++i) {
 		if (_types[i].is_null()) {
 			null_indices.push_back(i);
 		}
 	}
 	if (null_indices.size() > 0) {
-		const String null_indices_str = join_comma_separated<unsigned int>(to_span(null_indices));
+		const String null_indices_str = godot::join_comma_separated<unsigned int>(to_span(null_indices));
 		out_warnings.push_back(
 				String("{0} contains null items at indices {1}").format(varray(get_class(), null_indices_str)));
 	}
@@ -165,7 +165,7 @@ void VoxelBlockyTypeLibrary::get_configuration_warnings(PackedStringArray &out_w
 		unsigned int index1;
 		unsigned int index2;
 	};
-	std::vector<DuplicateName> duplicate_names;
+	StdVector<DuplicateName> duplicate_names;
 	for (unsigned int i = 0; i < _types.size(); ++i) {
 		const Ref<VoxelBlockyType> &type1 = _types[i];
 		if (type1.is_null()) {
@@ -200,7 +200,7 @@ void VoxelBlockyTypeLibrary::get_configuration_warnings(PackedStringArray &out_w
 		String sname = String(type->get_unique_name()).strip_edges();
 		if (sname.length() == 0) {
 			out_warnings.push_back(String("{0} at index {1} has an empty name.")
-										   .format(varray(get_class_name_str<VoxelBlockyType>(), type_index)));
+										   .format(varray(godot::get_class_name_str<VoxelBlockyType>(), type_index)));
 		}
 
 		type->get_configuration_warnings(out_warnings);
@@ -241,7 +241,9 @@ int VoxelBlockyTypeLibrary::get_model_index_default(StringName type_name) const 
 	return get_model_index(id);
 }
 
-static bool parse_attribute_value(
+namespace {
+
+bool parse_attribute_value(
 		const Variant &vv, const VoxelBlockyType &type, const StringName &attrib_name, uint8_t &out_attrib_value) {
 	if (vv.get_type() == Variant::STRING_NAME) {
 		StringName value_name = vv;
@@ -275,6 +277,8 @@ static bool parse_attribute_value(
 
 	return true;
 }
+
+} // namespace
 
 int VoxelBlockyTypeLibrary::get_model_index_single_attribute(StringName type_name, Variant p_attrib_value) const {
 	ZN_PROFILE_SCOPE();
@@ -396,6 +400,8 @@ Array VoxelBlockyTypeLibrary::get_type_name_and_attributes_from_model_index(int 
 
 	return ret;
 }
+
+namespace {
 
 struct VoxelIDToken {
 	enum Type { //
@@ -563,6 +569,8 @@ private:
 	Span<const char32_t> _str;
 };
 
+} // namespace
+
 bool VoxelBlockyTypeLibrary::parse_voxel_id(const String &p_str, VoxelID &out_id) {
 	Span<const char32_t> str(p_str.ptr(), p_str.length());
 
@@ -622,7 +630,7 @@ bool VoxelBlockyTypeLibrary::load_id_map_from_string_array(PackedStringArray map
 			"The current ID map isn't empty. Make sure you're not accidentally overwriting data, or clear the library "
 			"first.");
 
-	std::vector<VoxelID> id_map;
+	StdVector<VoxelID> id_map;
 	id_map.resize(map_array.size());
 
 	for (int model_index = 0; model_index < map_array.size(); ++model_index) {
@@ -692,7 +700,7 @@ String VoxelBlockyTypeLibrary::to_string(const VoxelID &id) {
 	return s;
 }
 
-PackedStringArray VoxelBlockyTypeLibrary::serialize_id_map_to_string_array(const std::vector<VoxelID> &id_map) {
+PackedStringArray VoxelBlockyTypeLibrary::serialize_id_map_to_string_array(const StdVector<VoxelID> &id_map) {
 	ZN_PROFILE_SCOPE();
 
 	PackedStringArray array;
@@ -713,8 +721,8 @@ PackedStringArray VoxelBlockyTypeLibrary::serialize_id_map_to_string_array() con
 	return serialize_id_map_to_string_array(_id_map);
 }
 
-void VoxelBlockyTypeLibrary::get_id_map_preview(PackedStringArray &out_ids, std::vector<uint16_t> &used_ids) const {
-	std::vector<VoxelID> id_map = _id_map;
+void VoxelBlockyTypeLibrary::get_id_map_preview(PackedStringArray &out_ids, StdVector<uint16_t> &used_ids) const {
+	StdVector<VoxelID> id_map = _id_map;
 	update_id_map(id_map, &used_ids);
 	out_ids = serialize_id_map_to_string_array(id_map);
 }
@@ -731,11 +739,11 @@ String VoxelBlockyTypeLibrary::serialize_id_map_to_json() const {
 }
 
 TypedArray<VoxelBlockyType> VoxelBlockyTypeLibrary::_b_get_types() const {
-	return to_typed_array(to_span(_types));
+	return godot::to_typed_array(to_span(_types));
 }
 
 void VoxelBlockyTypeLibrary::_b_set_types(TypedArray<VoxelBlockyType> types) {
-	copy_to(_types, types);
+	godot::copy_to(_types, types);
 	_needs_baking = true;
 }
 

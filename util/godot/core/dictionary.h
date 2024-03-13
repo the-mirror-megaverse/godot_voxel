@@ -8,10 +8,10 @@
 using namespace godot;
 #endif
 
-namespace zylann {
+namespace zylann::godot {
 
 template <typename T>
-inline bool try_get(const Dictionary &d, String key, T &out_value) {
+inline bool try_get(const Dictionary &d, const Variant &key, T &out_value) {
 #if defined(ZN_GODOT)
 	const Variant *v = d.getptr(key);
 	if (v == nullptr) {
@@ -35,6 +35,6 @@ inline bool try_get(const Dictionary &d, String key, T &out_value) {
 #endif
 }
 
-} // namespace zylann
+} // namespace zylann::godot
 
 #endif // ZN_GODOT_DICTIONARY_H

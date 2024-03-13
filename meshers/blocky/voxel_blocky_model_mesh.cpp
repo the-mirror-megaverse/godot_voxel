@@ -1,4 +1,6 @@
 #include "voxel_blocky_model_mesh.h"
+#include "../../util/containers/std_unordered_map.h"
+#include "../../util/containers/std_vector.h"
 #include "../../util/godot/classes/array_mesh.h"
 #include "../../util/godot/classes/object.h"
 #include "../../util/godot/classes/point_mesh.h"
@@ -10,15 +12,14 @@
 #include "../../util/string_funcs.h"
 #include "voxel_blocky_library.h"
 
-#include <unordered_map>
-
 namespace zylann::voxel {
 
 void VoxelBlockyModelMesh::set_mesh(Ref<Mesh> mesh) {
 	{
 		Ref<PointMesh> point_mesh = mesh;
 		if (point_mesh.is_valid()) {
-			ZN_PRINT_ERROR(format("PointMesh is not supported by {}.", get_class_name_str<VoxelBlockyModelMesh>()));
+			ZN_PRINT_ERROR(
+					format("PointMesh is not supported by {}.", godot::get_class_name_str<VoxelBlockyModelMesh>()));
 			return;
 		}
 	}
@@ -31,10 +32,12 @@ void VoxelBlockyModelMesh::set_mesh(Ref<Mesh> mesh) {
 	emit_changed();
 }
 
+namespace {
+
 #ifdef TOOLS_ENABLED
 // Generate tangents based on UVs (won't be as good as properly imported tangents)
-static PackedFloat32Array generate_tangents_from_uvs(const PackedVector3Array &positions,
-		const PackedVector3Array &normals, const PackedVector2Array &uvs, const PackedInt32Array &indices) {
+PackedFloat32Array generate_tangents_from_uvs(const PackedVector3Array &positions, const PackedVector3Array &normals,
+		const PackedVector2Array &uvs, const PackedInt32Array &indices) {
 	PackedFloat32Array tangents;
 	tangents.resize(positions.size() * 4);
 
@@ -69,23 +72,23 @@ static PackedFloat32Array generate_tangents_from_uvs(const PackedVector3Array &p
 }
 #endif
 
-static void add(Span<Vector3> vectors, Vector3 rhs) {
+void add(Span<Vector3> vectors, Vector3 rhs) {
 	for (Vector3 &v : vectors) {
 		v += rhs;
 	}
 }
 
-static void mul(Span<Vector3> vectors, const Basis &basis) {
+void mul(Span<Vector3> vectors, const Basis &basis) {
 	for (Vector3 &v : vectors) {
 		v = basis.xform(v);
 	}
 }
 
-inline void add(PackedVector3Array &vectors, Vector3 rhs) {
+void add(PackedVector3Array &vectors, Vector3 rhs) {
 	add(Span<Vector3>(vectors.ptrw(), vectors.size()), rhs);
 }
 
-static void rotate_mesh_arrays(
+void rotate_mesh_arrays(
 		PackedVector3Array &vertices, PackedVector3Array &normals, PackedFloat32Array tangents, const Basis &basis) {
 	Span<Vector3> vertices_w(vertices.ptrw(), vertices.size());
 	Span<Vector3> normals_w(normals.ptrw(), normals.size());
@@ -123,14 +126,13 @@ static void rotate_mesh_arrays(
 	}
 }
 
-static void rotate_mesh_arrays_ortho(PackedVector3Array &vertices, PackedVector3Array &normals,
-		PackedFloat32Array tangents, unsigned int ortho_basis_index) {
+void rotate_mesh_arrays_ortho(PackedVector3Array &vertices, PackedVector3Array &normals, PackedFloat32Array tangents,
+		unsigned int ortho_basis_index) {
 	const math::OrthoBasis ortho_basis = math::get_ortho_basis_from_index(ortho_basis_index);
 	const Basis basis(to_vec3(ortho_basis.x), to_vec3(ortho_basis.y), to_vec3(ortho_basis.z));
 	rotate_mesh_arrays(vertices, normals, tangents, basis);
 }
 
-namespace {
 bool validate_indices(Span<const int> indices, int vertex_count) {
 	ZN_ASSERT_RETURN_V(vertex_count >= 0, false);
 	for (const int index : indices) {
@@ -142,9 +144,8 @@ bool validate_indices(Span<const int> indices, int vertex_count) {
 	}
 	return true;
 }
-} // namespace
 
-static void bake_mesh_geometry(Span<const Array> surfaces, Span<const Ref<Material>> materials,
+void bake_mesh_geometry(Span<const Array> surfaces, Span<const Ref<Material>> materials,
 		VoxelBlockyModel::BakedData &baked_data, bool bake_tangents,
 		VoxelBlockyModel::MaterialIndexer &material_indexer, unsigned int ortho_rotation) {
 	baked_data.model.surface_count = surfaces.size();
@@ -228,13 +229,13 @@ static void bake_mesh_geometry(Span<const Array> surfaces, Span<const Ref<Materi
 				ZN_PRINT_ERROR(format("Voxel model is missing tangents and UVs. The model won't be "
 									  "baked. You should consider providing a mesh with tangents, or at least UVs and "
 									  "normals, or turn off tangents baking in {}.",
-						get_class_name_str<VoxelBlockyLibrary>()));
+						godot::get_class_name_str<VoxelBlockyLibrary>()));
 				continue;
 			}
 			ZN_PRINT_WARNING(format("Voxel model does not have tangents. They will be generated."
 									"You should consider providing a mesh with tangents, or at least UVs and normals, "
 									"or turn off tangents baking in {}.",
-					get_class_name_str<VoxelBlockyLibrary>()));
+					godot::get_class_name_str<VoxelBlockyLibrary>()));
 
 			tangents = generate_tangents_from_uvs(positions, normals, uvs, indices);
 		}
@@ -255,8 +256,8 @@ static void bake_mesh_geometry(Span<const Array> surfaces, Span<const Ref<Materi
 		// Note, an empty material counts as "The default material".
 		surface.material_id = material_indexer.get_or_create_index(material);
 
-		FixedArray<std::unordered_map<int, int>, Cube::SIDE_COUNT> added_side_indices;
-		std::unordered_map<int, int> added_regular_indices;
+		FixedArray<StdUnorderedMap<int, int>, Cube::SIDE_COUNT> added_side_indices;
+		StdUnorderedMap<int, int> added_regular_indices;
 		FixedArray<Vector3f, 3> tri_positions;
 
 		for (int i = 0; i < indices.size(); i += 3) {
@@ -272,7 +273,7 @@ static void bake_mesh_geometry(Span<const Array> surfaces, Span<const Ref<Materi
 
 				for (int j = 0; j < 3; ++j) {
 					const int src_index = indices[i + j];
-					std::unordered_map<int, int> &added_indices = added_side_indices[side];
+					StdUnorderedMap<int, int> &added_indices = added_side_indices[side];
 					const auto existing_dst_index_it = added_indices.find(src_index);
 
 					if (existing_dst_index_it == added_indices.end()) {
@@ -338,8 +339,8 @@ static void bake_mesh_geometry(Span<const Array> surfaces, Span<const Ref<Materi
 	} // namespace zylann::voxel
 }
 
-static void bake_mesh_geometry(const VoxelBlockyModelMesh &config, VoxelBlockyModel::BakedData &baked_data,
-		bool bake_tangents, VoxelBlockyModel::MaterialIndexer &material_indexer) {
+void bake_mesh_geometry(const VoxelBlockyModelMesh &config, VoxelBlockyModel::BakedData &baked_data, bool bake_tangents,
+		VoxelBlockyModel::MaterialIndexer &material_indexer) {
 	Ref<Mesh> mesh = config.get_mesh();
 
 	if (mesh.is_null()) {
@@ -357,8 +358,8 @@ static void bake_mesh_geometry(const VoxelBlockyModelMesh &config, VoxelBlockyMo
 	const unsigned int surface_count =
 			math::min(uint32_t(mesh->get_surface_count()), VoxelBlockyModel::BakedData::Model::MAX_SURFACES);
 
-	std::vector<Ref<Material>> materials;
-	std::vector<Array> surfaces;
+	StdVector<Ref<Material>> materials;
+	StdVector<Array> surfaces;
 
 	for (unsigned int i = 0; i < surface_count; ++i) {
 		surfaces.push_back(mesh->surface_get_arrays(i));
@@ -368,6 +369,8 @@ static void bake_mesh_geometry(const VoxelBlockyModelMesh &config, VoxelBlockyMo
 	bake_mesh_geometry(to_span(surfaces), to_span(materials), baked_data, bake_tangents, material_indexer,
 			config.get_mesh_ortho_rotation_index());
 }
+
+} // namespace
 
 void VoxelBlockyModelMesh::bake(BakedData &baked_data, bool bake_tangents, MaterialIndexer &materials) const {
 	baked_data.clear();
@@ -381,7 +384,7 @@ bool VoxelBlockyModelMesh::is_empty() const {
 	}
 	Ref<ArrayMesh> array_mesh = _mesh;
 	if (array_mesh.is_valid()) {
-		return is_mesh_empty(**array_mesh);
+		return godot::is_mesh_empty(**array_mesh);
 	}
 	return false;
 }
@@ -401,7 +404,7 @@ Ref<Mesh> VoxelBlockyModelMesh::get_preview_mesh() const {
 	const float bake_tangents = false;
 	VoxelBlockyModel::BakedData baked_data;
 	baked_data.color = get_color();
-	std::vector<Ref<Material>> materials;
+	StdVector<Ref<Material>> materials;
 	MaterialIndexer material_indexer{ materials };
 	bake_mesh_geometry(*this, baked_data, bake_tangents, material_indexer);
 

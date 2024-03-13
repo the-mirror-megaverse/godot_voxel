@@ -225,6 +225,9 @@ VoxelAboutWindow::VoxelAboutWindow() {
 						"Trey2k (Trey Moller)\n"
 						"marcinn (Marcin Nowak)\n"
 						"bfoster68\n"
+						"gumby-cmyk\n"
+						"Joshua Woods (jpw1991)\n"
+						"jjoshpoland (Josh)\n"
 						"\n"
 						"[b]Supporters:[/b]\n"
 						"rcorre (Ryan Roden-Corrent)\n"
@@ -237,7 +240,8 @@ VoxelAboutWindow::VoxelAboutWindow() {
 						"ilievmark (Iliev Mark)\n"
 						"OrbitalHare\n"
 						"matthewhilton (Matthew Hilton)\n"
-						"SummitCollie";
+						"SummitCollie\n"
+						"nulshift";
 	{
 		Dictionary d;
 

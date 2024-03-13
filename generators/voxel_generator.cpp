@@ -28,16 +28,16 @@ int VoxelGenerator::get_used_channels_mask() const {
 VoxelSingleValue VoxelGenerator::generate_single(Vector3i pos, unsigned int channel) {
 	VoxelSingleValue v;
 	v.i = 0;
-	ZN_ASSERT_RETURN_V(channel < VoxelBufferInternal::MAX_CHANNELS, v);
+	ZN_ASSERT_RETURN_V(channel < VoxelBuffer::MAX_CHANNELS, v);
 	// Default slow implementation
 	// TODO Optimize: a small part of the slowness is caused by the allocator.
 	// It is not a good use of `VoxelMemoryPool` for such a small size called so often.
 	// Instead it would be faster if it was a thread-local using the default allocator.
-	VoxelBufferInternal buffer;
+	VoxelBuffer buffer;
 	buffer.create(1, 1, 1);
 	VoxelQueryData q{ buffer, pos, 0 };
 	generate_block(q);
-	if (channel == VoxelBufferInternal::CHANNEL_SDF) {
+	if (channel == VoxelBuffer::CHANNEL_SDF) {
 		v.f = buffer.get_voxel_f(0, 0, 0, channel);
 	} else {
 		v.i = buffer.get_voxel(0, 0, 0, channel);
@@ -51,7 +51,7 @@ void VoxelGenerator::generate_series(Span<const float> positions_x, Span<const f
 	ZN_PRINT_ERROR("Not implemented");
 }
 
-void VoxelGenerator::_b_generate_block(Ref<gd::VoxelBuffer> out_buffer, Vector3 origin_in_voxels, int lod) {
+void VoxelGenerator::_b_generate_block(Ref<godot::VoxelBuffer> out_buffer, Vector3 origin_in_voxels, int lod) {
 	ERR_FAIL_COND(lod < 0);
 	ERR_FAIL_COND(lod >= int(constants::MAX_LOD));
 	ERR_FAIL_COND(out_buffer.is_null());
@@ -99,7 +99,9 @@ std::shared_ptr<VoxelGenerator::ShaderOutputs> VoxelGenerator::get_block_renderi
 	}
 }
 
-static void append_generator_parameter_uniforms(String &source_text, ComputeShaderParameters &out_params,
+namespace {
+
+void append_generator_parameter_uniforms(String &source_text, ComputeShaderParameters &out_params,
 		VoxelGenerator::ShaderSourceData &shader_data, unsigned int bindings_start) {
 	for (unsigned int i = 0; i < shader_data.parameters.size(); ++i) {
 		VoxelGenerator::ShaderParameter &p = shader_data.parameters[i];
@@ -113,6 +115,8 @@ static void append_generator_parameter_uniforms(String &source_text, ComputeShad
 	}
 	source_text += "\n";
 }
+
+} // namespace
 
 std::shared_ptr<ComputeShader> compile_detail_rendering_compute_shader(
 		VoxelGenerator &generator, ComputeShaderParameters &out_params) {

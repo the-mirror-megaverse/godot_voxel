@@ -4,6 +4,7 @@
 #include "../../engine/ids.h"
 #include "../../engine/priority_dependency.h"
 #include "../../storage/voxel_data.h"
+#include "../../util/containers/std_vector.h"
 #include "../../util/tasks/threaded_task.h"
 #include "voxel_lod_terrain_update_data.h"
 
@@ -11,6 +12,7 @@ namespace zylann::voxel {
 
 struct StreamingDependency;
 struct MeshingDependency;
+class BufferedTaskScheduler;
 
 // Runs a part of the update loop of a VoxelLodTerrain.
 // This part can run on another thread, so multiple terrains can update in parallel.
@@ -27,7 +29,7 @@ public:
 			std::shared_ptr<StreamingDependency> p_streaming_dependency,
 			std::shared_ptr<MeshingDependency> p_meshing_dependency,
 			std::shared_ptr<PriorityDependency::ViewersData> p_shared_viewers_data, Vector3 p_viewer_pos,
-			bool p_request_instances, VolumeID p_volume_id, Transform3D p_volume_transform) :
+			VolumeID p_volume_id, Transform3D p_volume_transform) :
 			//
 			_data(p_data),
 			_update_data(p_update_data),
@@ -35,7 +37,6 @@ public:
 			_meshing_dependency(p_meshing_dependency),
 			_shared_viewers_data(p_shared_viewers_data),
 			_viewer_pos(p_viewer_pos),
-			_request_instances(p_request_instances),
 			_volume_id(p_volume_id),
 			_volume_transform(p_volume_transform) {}
 
@@ -55,12 +56,14 @@ public:
 
 	// To use on loaded blocks
 	static inline void schedule_mesh_update(VoxelLodTerrainUpdateData::MeshBlockState &block, Vector3i bpos,
-			std::vector<Vector3i> &blocks_pending_update) {
+			StdVector<VoxelLodTerrainUpdateData::MeshToUpdate> &blocks_pending_update, bool require_visual) {
 		if (block.state != VoxelLodTerrainUpdateData::MESH_UPDATE_NOT_SENT) {
-			if (block.active) {
+			if (block.visual_active || block.collision_active) {
 				// Schedule an update
 				block.state = VoxelLodTerrainUpdateData::MESH_UPDATE_NOT_SENT;
-				blocks_pending_update.push_back(bpos);
+				block.update_list_index = blocks_pending_update.size();
+				blocks_pending_update.push_back(
+						VoxelLodTerrainUpdateData::MeshToUpdate{ bpos, TaskCancellationToken(), require_visual });
 			} else {
 				// Just mark it as needing update, so the visibility system will schedule its update when needed.
 				block.state = VoxelLodTerrainUpdateData::MESH_NEED_UPDATE;
@@ -69,8 +72,8 @@ public:
 	}
 
 	static void send_block_save_requests(VolumeID volume_id, Span<VoxelData::BlockToSave> blocks_to_save,
-			std::shared_ptr<StreamingDependency> &stream_dependency, unsigned int data_block_size,
-			BufferedTaskScheduler &task_scheduler);
+			std::shared_ptr<StreamingDependency> &stream_dependency, BufferedTaskScheduler &task_scheduler,
+			std::shared_ptr<AsyncDependencyTracker> tracker, bool with_flush);
 
 private:
 	std::shared_ptr<VoxelData> _data;
@@ -79,10 +82,14 @@ private:
 	std::shared_ptr<MeshingDependency> _meshing_dependency;
 	std::shared_ptr<PriorityDependency::ViewersData> _shared_viewers_data;
 	Vector3 _viewer_pos;
-	bool _request_instances;
 	VolumeID _volume_id;
 	Transform3D _volume_transform;
 };
+
+void update_transition_masks(VoxelLodTerrainUpdateData::State &state, uint32_t lods_to_update_transitions,
+		unsigned int lod_count, bool use_refcounts);
+
+void add_unloaded_saving_blocks(VoxelLodTerrainUpdateData::Lod &lod, Span<const VoxelData::BlockToSave> src);
 
 } // namespace zylann::voxel
 

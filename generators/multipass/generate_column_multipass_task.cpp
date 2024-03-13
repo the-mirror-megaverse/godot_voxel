@@ -1,7 +1,8 @@
 #include "generate_column_multipass_task.h"
+#include "../../engine/buffered_task_scheduler.h"
 #include "../../engine/voxel_engine.h"
 #include "../../storage/voxel_data.h"
-
+#include "../../util/containers/std_vector.h"
 #include "../../util/dstack.h"
 #include "../../util/godot/classes/time.h"
 #include "../../util/string_funcs.h"
@@ -127,7 +128,7 @@ void GenerateColumnMultipassTask::run(ThreadedTaskContext &ctx) {
 	const unsigned int central_block_index =
 			Vector2iUtil::get_yx_index(Vector2iUtil::create(pass.dependency_extents), neighbors_box.size);
 
-	std::vector<Column *> columns;
+	StdVector<Column *> columns;
 	// TODO Cache memory
 	columns.reserve(Vector2iUtil::get_area(neighbors_box.size));
 
@@ -172,7 +173,7 @@ void GenerateColumnMultipassTask::run(ThreadedTaskContext &ctx) {
 
 		bool spawned_subtasks = false;
 		bool postpone = false;
-		int debug_subtask_count = 0;
+		//int debug_subtask_count = 0;
 
 		// Check loading levels
 		{
@@ -249,7 +250,7 @@ void GenerateColumnMultipassTask::run(ThreadedTaskContext &ctx) {
 							column->pending_subpass_tasks_mask |= (1 << prev_subpass_index);
 
 							spawned_subtasks = true;
-							++debug_subtask_count;
+							//++debug_subtask_count;
 						}
 						// TODO If a column got deallocated after it was returned once, restart its generation process.
 						// This would be to cover cases where blocks of a column get requested more than once. In the
@@ -305,7 +306,7 @@ void GenerateColumnMultipassTask::run(ThreadedTaskContext &ctx) {
 					const int column_base_y_blocks = _generator_internal->column_base_y_blocks;
 
 					// TODO Cache memory
-					std::vector<Block *> blocks;
+					StdVector<Block *> blocks;
 					blocks.reserve(columns.size() * column_height_blocks);
 					// Compose grid of blocks indexed as ZXY (index+1 goes up along Y).
 					// ZXY indexing is convenient here, since columns are indexed with YX (aka ZX, because Y in 2D is Z

@@ -43,6 +43,7 @@
 #include "streams/sqlite/voxel_stream_sqlite.h"
 #include "streams/vox/vox_loader.h"
 #include "streams/voxel_block_serializer_gd.h"
+#include "streams/voxel_stream_memory.h"
 #include "streams/voxel_stream_script.h"
 #include "terrain/fixed_lod/voxel_box_mover.h"
 #include "terrain/fixed_lod/voxel_terrain.h"
@@ -143,7 +144,7 @@
 
 #endif // TOOLS_ENABLED
 
-#ifdef VOXEL_RUN_TESTS
+#ifdef VOXEL_TESTS
 #include "tests/tests.h"
 #endif
 
@@ -178,8 +179,8 @@ void print_size_reminders() {
 	ZN_PRINT_VERBOSE(format("Size of Mutex: {}", sizeof(zylann::Mutex)));
 	ZN_PRINT_VERBOSE(format("Size of BinaryMutex: {}", sizeof(zylann::BinaryMutex)));
 
-	ZN_PRINT_VERBOSE(format("Size of gd::VoxelBuffer: {}", sizeof(gd::VoxelBuffer)));
-	ZN_PRINT_VERBOSE(format("Size of VoxelBufferInternal: {}", sizeof(VoxelBufferInternal)));
+	ZN_PRINT_VERBOSE(format("Size of godot::VoxelBuffer: {}", sizeof(voxel::godot::VoxelBuffer)));
+	ZN_PRINT_VERBOSE(format("Size of VoxelBuffer: {}", sizeof(VoxelBuffer)));
 	ZN_PRINT_VERBOSE(format("Size of VoxelMeshBlock: {}", sizeof(VoxelMeshBlock)));
 	ZN_PRINT_VERBOSE(format("Size of VoxelTerrain: {}", sizeof(VoxelTerrain)));
 	ZN_PRINT_VERBOSE(format("Size of VoxelLodTerrain: {}", sizeof(VoxelLodTerrain)));
@@ -194,6 +195,7 @@ void print_size_reminders() {
 
 void initialize_voxel_module(ModuleInitializationLevel p_level) {
 	using namespace zylann;
+	using namespace zylann::godot;
 	using namespace voxel;
 
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
@@ -204,7 +206,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		// TODO Enhancement: can I prevent users from instancing `VoxelEngine`?
 		// This class is used as a singleton so it's not really abstract.
 		// Should I use `register_abstract_class` anyways?
-		ClassDB::register_class<gd::VoxelEngine>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelEngine>();
 
 		// Misc
 
@@ -235,7 +237,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<pg::VoxelGraphFunction>();
 
 		// Storage
-		ClassDB::register_class<gd::VoxelBuffer>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelBuffer>();
 
 		// Nodes
 		ClassDB::register_abstract_class<VoxelNode>();
@@ -246,15 +248,16 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<VoxelInstancer>();
 		ClassDB::register_class<VoxelInstanceComponent>();
 		ClassDB::register_abstract_class<VoxelInstancerRigidBody>();
-		ClassDB::register_abstract_class<gd::VoxelModifier>();
-		ClassDB::register_class<gd::VoxelModifierSphere>();
-		ClassDB::register_class<gd::VoxelModifierMesh>();
+		ClassDB::register_abstract_class<zylann::voxel::godot::VoxelModifier>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelModifierSphere>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelModifierMesh>();
 
 		// Streams
 		ClassDB::register_abstract_class<VoxelStream>();
 		ClassDB::register_class<VoxelStreamRegionFiles>();
 		ClassDB::register_class<VoxelStreamScript>();
 		ClassDB::register_class<VoxelStreamSQLite>();
+		ClassDB::register_class<VoxelStreamMemory>();
 
 		// Generators
 		ClassDB::register_abstract_class<VoxelGenerator>();
@@ -278,7 +281,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		// And this can happen in a thread, causing crashes due to the concurrent access
 		ClassDB::register_abstract_class<VoxelToolBuffer>();
 		ClassDB::register_abstract_class<VoxelToolMultipassGenerator>();
-		ClassDB::register_class<gd::VoxelBlockSerializer>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelBlockSerializer>();
 		ClassDB::register_class<VoxelVoxLoader>();
 		ClassDB::register_class<ZN_FastNoiseLite>();
 		ClassDB::register_class<ZN_FastNoiseLiteGradient>();
@@ -334,7 +337,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 
 		unsigned int main_thread_budget_usec;
 		const VoxelEngine::ThreadsConfig threads_config =
-				gd::VoxelEngine::get_config_from_godot(main_thread_budget_usec);
+				zylann::voxel::godot::VoxelEngine::get_config_from_godot(main_thread_budget_usec);
 		VoxelEngine::create_singleton(threads_config);
 		VoxelEngine::get_singleton().set_main_thread_time_budget_usec(main_thread_budget_usec);
 #if defined(ZN_GODOT)
@@ -354,16 +357,25 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		// different threads
 #endif
 
-		gd::VoxelEngine::create_singleton();
-		add_godot_singleton("VoxelEngine", gd::VoxelEngine::get_singleton());
+		zylann::voxel::godot::VoxelEngine::create_singleton();
+		zylann::godot::add_singleton("VoxelEngine", zylann::voxel::godot::VoxelEngine::get_singleton());
 
-		VoxelMetadataFactory::get_singleton().add_constructor_by_type<gd::VoxelMetadataVariant>(
-				gd::METADATA_TYPE_VARIANT);
+		VoxelMetadataFactory::get_singleton().add_constructor_by_type<zylann::voxel::godot::VoxelMetadataVariant>(
+				zylann::voxel::godot::METADATA_TYPE_VARIANT);
 
 		VoxelMesherTransvoxel::load_static_resources();
 
-#ifdef VOXEL_RUN_TESTS
-		zylann::voxel::tests::run_voxel_tests();
+#ifdef VOXEL_TESTS
+		const PackedStringArray command_line_arguments = zylann::godot::get_command_line_arguments();
+		const String tests_cmd = "--run_voxel_tests";
+
+		for (int i = 0; i < command_line_arguments.size(); ++i) {
+			const String arg = command_line_arguments[i];
+			if (arg == tests_cmd) {
+				zylann::voxel::tests::run_voxel_tests();
+				break;
+			}
+		}
 #endif
 	}
 
@@ -458,7 +470,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 #ifdef TOOLS_ENABLED
 		// TODO Any way to define a custom command line argument that closes Godot afterward?
 
-		const PackedStringArray command_line_arguments = get_command_line_arguments();
+		const PackedStringArray command_line_arguments = zylann::godot::get_command_line_arguments();
 		const String doc_tool_cmd = "--voxel_doc_tool";
 
 		for (int i = 0; i < command_line_arguments.size(); ++i) {
@@ -485,7 +497,7 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 	using namespace voxel;
 
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
-		remove_godot_singleton("VoxelEngine");
+		zylann::godot::remove_singleton("VoxelEngine");
 
 		// At this point, the GDScript module has nullified GDScriptLanguage::singleton!!
 		// That means it's impossible to free scripts still referenced by VoxelEngine. And that can happen, because
@@ -495,7 +507,7 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 		VoxelMesherTransvoxel::free_static_resources();
 		VoxelStringNames::destroy_singleton();
 		pg::NodeTypeDB::destroy_singleton();
-		gd::VoxelEngine::destroy_singleton();
+		zylann::voxel::godot::VoxelEngine::destroy_singleton();
 		VoxelEngine::destroy_singleton();
 
 		// Do this last as VoxelEngine might still be holding some refs to voxel blocks
@@ -508,7 +520,7 @@ void uninitialize_voxel_module(ModuleInitializationLevel p_level) {
 
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
-		zylann::free_debug_resources();
+		zylann::godot::free_debug_resources();
 		VoxelGraphEditorNodePreview::unload_resources();
 
 		// Plugins are automatically unregistered since https://github.com/godotengine/godot-cpp/pull/1138

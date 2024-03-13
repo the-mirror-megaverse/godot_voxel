@@ -4,15 +4,15 @@
 #include "../../engine/voxel_engine.h"
 #include "../../meshers/mesh_block_task.h"
 #include "../../storage/voxel_data.h"
+#include "../../util/containers/std_map.h"
+#include "../../util/containers/std_unordered_map.h"
+#include "../../util/containers/std_vector.h"
 #include "../../util/godot/shader_material_pool.h"
 #include "../voxel_mesh_map.h"
 #include "../voxel_node.h"
 #include "lod_octree.h"
 #include "voxel_lod_terrain_update_data.h"
 #include "voxel_mesh_block_vlt.h"
-
-#include <map>
-#include <unordered_set>
 
 #ifdef TOOLS_ENABLED
 #include "../../editor/voxel_debug.h"
@@ -23,8 +23,9 @@ namespace zylann::voxel {
 class VoxelTool;
 class VoxelStream;
 class VoxelInstancer;
+class VoxelSaveCompletionTracker;
 
-class ShaderMaterialPoolVLT : public ShaderMaterialPool {
+class ShaderMaterialPoolVLT : public zylann::godot::ShaderMaterialPool {
 public:
 	void recycle(Ref<ShaderMaterial> material);
 };
@@ -56,6 +57,9 @@ public:
 
 	void set_lod_distance(float p_lod_distance);
 	float get_lod_distance() const;
+
+	void set_secondary_lod_distance(float p_lod_distance);
+	float get_secondary_lod_distance() const;
 
 	void set_lod_count(int p_lod_count);
 	int get_lod_count() const;
@@ -190,6 +194,16 @@ public:
 
 	bool is_area_meshed(const Box3i &box_in_voxels, unsigned int lod_index) const;
 
+	enum StreamingSystem : uint8_t { //
+		STREAMING_SYSTEM_LEGACY_OCTREE = VoxelLodTerrainUpdateData::STREAMING_SYSTEM_LEGACY_OCTREE,
+		STREAMING_SYSTEM_CLIPBOX = VoxelLodTerrainUpdateData::STREAMING_SYSTEM_CLIPBOX
+	};
+
+	// This is temporary, to avoid breaking projects as the new system gets improved and allowing to transition
+	// progressively.
+	StreamingSystem get_streaming_system() const;
+	void set_streaming_system(StreamingSystem v);
+
 	// Debugging
 
 	Array debug_raycast_mesh_block(Vector3 world_origin, Vector3 world_direction) const;
@@ -206,8 +220,12 @@ public:
 		DEBUG_DRAW_VOLUME_BOUNDS = 4,
 		DEBUG_DRAW_EDITED_BLOCKS = 5,
 		DEBUG_DRAW_MODIFIER_BOUNDS = 6,
+		DEBUG_DRAW_ACTIVE_MESH_BLOCKS = 7,
+		DEBUG_DRAW_VIEWER_CLIPBOXES = 8,
+		DEBUG_DRAW_LOADED_VISUAL_AND_COLLISION_BLOCKS = 9,
+		DEBUG_DRAW_ACTIVE_VISUAL_AND_COLLISION_BLOCKS = 10,
 
-		DEBUG_DRAW_FLAGS_COUNT = 7
+		DEBUG_DRAW_FLAGS_COUNT = 11
 	};
 
 	void debug_set_draw_enabled(bool enabled);
@@ -216,7 +234,12 @@ public:
 	void debug_set_draw_flag(DebugDrawFlag flag_index, bool enabled);
 	bool debug_get_draw_flag(DebugDrawFlag flag_index) const;
 
+#ifdef TOOLS_ENABLED
+	void debug_set_draw_flags(uint32_t mask);
+#endif
+
 	Node3D *debug_dump_as_nodes(bool include_instancer) const;
+	Error debug_dump_as_scene(String fpath, bool include_instancer) const;
 
 	// Editor
 
@@ -238,7 +261,7 @@ public:
 	}
 
 	Array get_mesh_block_surface(Vector3i block_pos, int lod_index) const;
-	void get_meshed_block_positions_at_lod(int lod_index, std::vector<Vector3i> &out_positions) const;
+	void get_meshed_block_positions_at_lod(int lod_index, StdVector<Vector3i> &out_positions) const;
 
 	inline VoxelData &get_storage() const {
 		ZN_ASSERT(_data != nullptr);
@@ -249,6 +272,8 @@ public:
 		return _data;
 	}
 
+	void get_lod_distances(Span<float> distances);
+
 protected:
 	void _notification(int p_what);
 
@@ -258,6 +283,7 @@ protected:
 
 private:
 	void process(float delta);
+	void apply_quick_reloading_blocks();
 	void apply_main_thread_update_tasks();
 
 	void apply_mesh_update(VoxelEngine::BlockMeshOutput &ob);
@@ -265,7 +291,7 @@ private:
 	void apply_detail_texture_update(VoxelEngine::BlockDetailTextureOutput &ob);
 	void apply_detail_texture_update_to_block(
 			VoxelMeshBlockVLT &block, DetailTextureOutput &ob, unsigned int lod_index);
-	void try_apply_parent_detail_texture_to_block(VoxelMeshBlockVLT &block, Vector3i bpos);
+	void try_apply_parent_detail_texture_to_block(VoxelMeshBlockVLT &block, Vector3i bpos, unsigned int lod_index);
 
 	void start_updater();
 	void stop_updater();
@@ -276,13 +302,13 @@ private:
 
 	Vector3 get_local_viewer_pos() const;
 	void _set_lod_count(int p_lod_count);
-	void set_mesh_block_active(VoxelMeshBlockVLT &block, bool active, bool with_fading);
+	void set_mesh_block_visual_active(VoxelMeshBlockVLT &block, bool active, bool with_fading, unsigned int lod_index);
 
 	void _on_stream_params_changed();
 
 	void update_shader_material_pool_template();
 
-	void save_all_modified_blocks(bool with_copy);
+	void save_all_modified_blocks(bool with_copy, std::shared_ptr<AsyncDependencyTracker> tracker);
 
 	void process_deferred_collision_updates(uint32_t timeout_msec);
 	void process_fading_blocks(float delta);
@@ -294,7 +320,7 @@ private:
 
 	LocalCameraInfo get_local_camera_info() const;
 
-	void _b_save_modified_blocks();
+	Ref<VoxelSaveCompletionTracker> _b_save_modified_blocks();
 	void _b_set_voxel_bounds(AABB aabb);
 	AABB _b_get_voxel_bounds() const;
 
@@ -315,12 +341,11 @@ private:
 	static void _bind_methods();
 
 private:
-	friend class BuildTransitionMeshTask;
-
 	VolumeID _volume_id;
 	ProcessCallback _process_callback = PROCESS_CALLBACK_IDLE;
 
 	Ref<Material> _material;
+	bool _material_uses_lod_info = false;
 
 	// The main reason this pool even exists is because of this: https://github.com/godotengine/godot/issues/34741
 	// Blocks need individual shader parameters for several features,
@@ -339,7 +364,7 @@ private:
 	struct FadingOutMesh {
 		// Position in space coordinates local to the volume
 		Vector3 local_position;
-		DirectMeshInstance mesh_instance;
+		zylann::godot::DirectMeshInstance mesh_instance;
 		// Changing properties is the reason we may want to fade the mesh, so we may hold on a copy of the material with
 		// properties before the fade starts.
 		Ref<ShaderMaterial> shader_material;
@@ -348,20 +373,20 @@ private:
 	};
 
 	// These are "fire and forget"
-	std::vector<FadingOutMesh> _fading_out_meshes;
+	StdVector<FadingOutMesh> _fading_out_meshes;
 
 	unsigned int _collision_lod_count = 0;
 	unsigned int _collision_layer = 1;
 	unsigned int _collision_mask = 1;
 	float _collision_margin = constants::DEFAULT_COLLISION_MARGIN;
 	int _collision_update_delay = 0;
-	FixedArray<std::vector<Vector3i>, constants::MAX_LOD> _deferred_collision_updates_per_lod;
+	FixedArray<StdVector<Vector3i>, constants::MAX_LOD> _deferred_collision_updates_per_lod;
 
 	float _lod_fade_duration = 0.f;
 	// Note, direct pointers to mesh blocks should be safe because these blocks are always destroyed from the same
 	// thread that updates fading blocks. If a mesh block is destroyed, these maps should be updated at the same time.
 	// TODO Optimization: use FlatMap? Need to check how many blocks get in there, probably not many
-	FixedArray<std::map<Vector3i, VoxelMeshBlockVLT *>, constants::MAX_LOD> _fading_blocks_per_lod;
+	FixedArray<StdMap<Vector3i, VoxelMeshBlockVLT *>, constants::MAX_LOD> _fading_blocks_per_lod;
 
 	struct FadingDetailTexture {
 		Vector3i block_position;
@@ -369,7 +394,7 @@ private:
 		float progress;
 	};
 
-	std::vector<FadingDetailTexture> _fading_detail_textures;
+	StdVector<FadingDetailTexture> _fading_detail_textures;
 
 	VoxelInstancer *_instancer = nullptr;
 
@@ -390,14 +415,14 @@ private:
 		VoxelEngine::BlockMeshOutput data;
 	};
 
-	FixedArray<std::unordered_map<Vector3i, RefCount>, constants::MAX_LOD> _queued_main_thread_mesh_updates;
+	FixedArray<StdUnorderedMap<Vector3i, RefCount>, constants::MAX_LOD> _queued_main_thread_mesh_updates;
 
 #ifdef TOOLS_ENABLED
 	bool _debug_draw_enabled = false;
-	uint8_t _debug_draw_flags = 0;
 	uint8_t _edited_blocks_gizmos_lod_index = 0;
+	uint16_t _debug_draw_flags = 0;
 
-	DebugRenderer _debug_renderer;
+	zylann::godot::DebugRenderer _debug_renderer;
 
 	struct DebugMeshUpdateItem {
 		static constexpr uint32_t LINGER_FRAMES = 10;
@@ -406,7 +431,7 @@ private:
 		uint32_t remaining_frames;
 	};
 
-	std::vector<DebugMeshUpdateItem> _debug_mesh_update_items;
+	StdVector<DebugMeshUpdateItem> _debug_mesh_update_items;
 
 	struct DebugEditItem {
 		static constexpr uint32_t LINGER_FRAMES = 10;
@@ -414,7 +439,7 @@ private:
 		uint32_t remaining_frames;
 	};
 
-	std::vector<DebugEditItem> _debug_edit_items;
+	StdVector<DebugEditItem> _debug_edit_items;
 #endif
 
 	Stats _stats;
@@ -424,5 +449,6 @@ private:
 
 VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain::ProcessCallback)
 VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain::DebugDrawFlag)
+VARIANT_ENUM_CAST(zylann::voxel::VoxelLodTerrain::StreamingSystem);
 
 #endif // VOXEL_LOD_TERRAIN_HPP

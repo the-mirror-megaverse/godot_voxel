@@ -3,8 +3,14 @@
 
 #include "../../engine/ids.h"
 #include "../../storage/voxel_buffer_gd.h"
+#include "../../util/containers/std_vector.h"
+#include "../../util/math/box3i.h"
+#include "../../util/math/vector2i.h"
+#include "../../util/memory/memory.h"
 #include "../../util/ref_count.h"
+#include "../../util/thread/mutex.h"
 #include "../voxel_generator.h"
+#include "voxel_generator_multipass_cb_structs.h"
 #include "voxel_tool_multipass_generator.h" // Must be included so we can define GDVIRTUAL methods
 
 #if defined(ZN_GODOT)
@@ -85,7 +91,7 @@ public:
 	// Run the generator to get a particular column from scratch, using a single thread for better script debugging
 	// (since Godot 4 still doesn't support debugging scripts in different threads, at time of writing). This doesn't
 	// use the internal cache and can be extremely slow.
-	TypedArray<gd::VoxelBuffer> debug_generate_test_column(Vector2i column_position_blocks);
+	TypedArray<godot::VoxelBuffer> debug_generate_test_column(Vector2i column_position_blocks);
 
 	// Internal
 
@@ -111,7 +117,7 @@ public:
 		uint8_t viewer_count;
 	};
 
-	bool debug_try_get_column_states(std::vector<DebugColumnState> &out_states);
+	bool debug_try_get_column_states(StdVector<DebugColumnState> &out_states);
 
 protected:
 	bool _set(const StringName &p_name, const Variant &p_value);
@@ -123,7 +129,7 @@ protected:
 	GDVIRTUAL2(_generate_pass, Ref<VoxelToolMultipassGenerator>, int)
 
 	// Called outside of the column region so it is possible to define what generates past the top and bottom
-	GDVIRTUAL2(_generate_block_fallback, Ref<gd::VoxelBuffer>, Vector3i)
+	GDVIRTUAL2(_generate_block_fallback, Ref<godot::VoxelBuffer>, Vector3i)
 
 	GDVIRTUAL0RC(int, _get_used_channels_mask)
 #endif
@@ -178,7 +184,7 @@ private:
 	// without having access to the list of paired viewers... if we don't, and if the user doesn't re-generate the
 	// terrain, moving around will start causing failed generation requests in a loop because the cache of
 	// partially-generated columns won't be in the right state...
-	std::vector<PairedViewer> _paired_viewers;
+	StdVector<PairedViewer> _paired_viewers;
 
 	// Threads can be very busy working on this data structure. Yet in the editor, users can modify its parameters
 	// anytime, which could break everything. So when any parameter changes, a copy of this structure is made, and the

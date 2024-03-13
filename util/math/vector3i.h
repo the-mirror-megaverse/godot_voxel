@@ -15,7 +15,7 @@ using namespace godot;
 #endif
 
 #include "../godot/macros.h"
-#include <iosfwd>
+#include "../std_stringstream.h"
 
 namespace zylann {
 namespace Vector3iUtil {
@@ -158,7 +158,7 @@ inline int chebyshev_distance(const Vector3i &a, const Vector3i &b) {
 
 } // namespace math
 
-std::stringstream &operator<<(std::stringstream &ss, const Vector3i &v);
+StdStringStream &operator<<(StdStringStream &ss, const Vector3i &v);
 
 } // namespace zylann
 
@@ -195,6 +195,12 @@ struct Vector3iHasher {
 		uint32_t hash = zylann::hash_djb2_one_32(v.x);
 		hash = zylann::hash_djb2_one_32(v.y, hash);
 		return zylann::hash_djb2_one_32(v.z, hash);
+
+		// What Godot uses. Turns out to be slower?
+		// uint32_t h = zylann::hash_murmur3_one_32(v.x);
+		// h = zylann::hash_murmur3_one_32(v.y, h);
+		// h = zylann::hash_murmur3_one_32(v.z, h);
+		// return zylann::hash_fmix32(h);
 	}
 };
 

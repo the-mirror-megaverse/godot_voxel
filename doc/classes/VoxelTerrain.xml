@@ -105,6 +105,8 @@
 				Note 1: all modified blocks are automatically saved before the terrain is destroyed.
 				Note 2: this will only have an effect if the stream setup on this terrain supports saving.
 				Note 3: saving is asynchronous and won't block the game. the save may complete only a short time after you call this method.
+				Use the returned tracker object to know when saving has completed. However, saves occurring after calling this method won't be tracked by this object.
+				Note that blocks getting unloaded as the viewer moves around can also trigger saving tasks, independently from this function.
 			</description>
 		</method>
 		<method name="try_set_block_data">
@@ -125,6 +127,7 @@
 		<member name="area_edit_notification_enabled" type="bool" setter="set_area_edit_notification_enabled" getter="is_area_edit_notification_enabled" default="false">
 		</member>
 		<member name="automatic_loading_enabled" type="bool" setter="set_automatic_loading_enabled" getter="is_automatic_loading_enabled" default="true">
+			If turned off, the terrain will no longer automatically load blocks around viewers locally. This may be used in multiplayer scenarios, when the terrain is client-side, because blocks will be sent by the server instead.
 		</member>
 		<member name="block_enter_notification_enabled" type="bool" setter="set_block_enter_notification_enabled" getter="is_block_enter_notification_enabled" default="false">
 		</member>

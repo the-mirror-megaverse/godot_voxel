@@ -1,13 +1,13 @@
 #ifndef VOXEL_DEBUG_H
 #define VOXEL_DEBUG_H
 
+#include "../util/containers/std_vector.h"
 #include "../util/godot/classes/standard_material_3d.h"
 #include "../util/godot/direct_multimesh_instance.h"
-#include <vector>
 
 ZN_GODOT_FORWARD_DECLARE(class Mesh);
 
-namespace zylann {
+namespace zylann::godot {
 namespace DebugColors {
 
 enum ColorID { //
@@ -40,7 +40,7 @@ private:
 	void init();
 	bool _initialized = false;
 
-	std::vector<DirectMultiMeshInstance::TransformAndColor32> _items;
+	StdVector<DirectMultiMeshInstance::TransformAndColor32> _items;
 	Ref<MultiMesh> _multimesh;
 	DirectMultiMeshInstance _multimesh_instance;
 	// TODO World3D is a reference, do not store it by pointer
@@ -78,7 +78,7 @@ public:
 	void clear();
 
 private:
-	std::vector<DebugRendererItem *> _items;
+	StdVector<DebugRendererItem *> _items;
 	unsigned int _current = 0;
 	bool _inside_block = false;
 	// TODO World3D is a reference, do not store it by pointer
@@ -86,6 +86,6 @@ private:
 	DebugMultiMeshRenderer _mm_renderer;
 };
 
-} // namespace zylann
+} // namespace zylann::godot
 
 #endif // VOXEL_DEBUG_H

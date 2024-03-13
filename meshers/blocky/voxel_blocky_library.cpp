@@ -162,7 +162,7 @@ bool VoxelBlockyLibrary::_set(const StringName &p_name, const Variant &p_value) 
 #ifdef TOOLS_ENABLED
 
 void VoxelBlockyLibrary::get_configuration_warnings(PackedStringArray &out_warnings) const {
-	std::vector<int> null_indices;
+	StdVector<int> null_indices;
 
 	bool has_solid_model = false;
 	for (unsigned int i = 0; i < _voxel_models.size() && !has_solid_model; ++i) {
@@ -183,7 +183,7 @@ void VoxelBlockyLibrary::get_configuration_warnings(PackedStringArray &out_warni
 	}
 
 	if (null_indices.size() > 0) {
-		const String indices_str = join_comma_separated<int>(to_span(null_indices));
+		const String indices_str = godot::join_comma_separated<int>(to_span(null_indices));
 		// Should we really consider it a problem?
 		out_warnings.append(String(ZN_TTR("The {0} has null model entries: {1}"))
 									.format(varray(VoxelBlockyLibrary::get_class_static(), indices_str)));

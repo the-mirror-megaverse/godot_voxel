@@ -6,12 +6,12 @@
 
 namespace zylann::voxel {
 
-int /*Error*/ VoxelVoxLoader::load_from_file(String fpath, Ref<gd::VoxelBuffer> p_voxels,
-		Ref<VoxelColorPalette> palette, gd::VoxelBuffer::ChannelId dst_channel) {
+int /*Error*/ VoxelVoxLoader::load_from_file(String fpath, Ref<godot::VoxelBuffer> p_voxels,
+		Ref<VoxelColorPalette> palette, godot::VoxelBuffer::ChannelId dst_channel) {
 	ZN_DSTACK();
-	ERR_FAIL_INDEX_V(dst_channel, gd::VoxelBuffer::MAX_CHANNELS, ERR_INVALID_PARAMETER);
+	ERR_FAIL_INDEX_V(dst_channel, godot::VoxelBuffer::MAX_CHANNELS, ERR_INVALID_PARAMETER);
 	ERR_FAIL_COND_V(p_voxels.is_null(), ERR_INVALID_PARAMETER);
-	VoxelBufferInternal &voxels = p_voxels->get_buffer();
+	VoxelBuffer &voxels = p_voxels->get_buffer();
 
 	zylann::voxel::magica::Data data;
 	Error load_err = data.load_from_file(fpath);
@@ -20,7 +20,7 @@ int /*Error*/ VoxelVoxLoader::load_from_file(String fpath, Ref<gd::VoxelBuffer> 
 	const zylann::voxel::magica::Model &model = data.get_model(0);
 
 	Span<const Color8> src_palette = to_span_const(data.get_palette());
-	const VoxelBufferInternal::Depth depth = voxels.get_channel_depth(VoxelBufferInternal::CHANNEL_COLOR);
+	const VoxelBuffer::Depth depth = voxels.get_channel_depth(VoxelBuffer::CHANNEL_COLOR);
 
 	Span<uint8_t> dst_raw;
 	voxels.create(model.size);
@@ -33,11 +33,11 @@ int /*Error*/ VoxelVoxLoader::load_from_file(String fpath, Ref<gd::VoxelBuffer> 
 		}
 
 		switch (depth) {
-			case VoxelBufferInternal::DEPTH_8_BIT: {
+			case VoxelBuffer::DEPTH_8_BIT: {
 				memcpy(dst_raw.data(), model.color_indexes.data(), model.color_indexes.size());
 			} break;
 
-			case VoxelBufferInternal::DEPTH_16_BIT: {
+			case VoxelBuffer::DEPTH_16_BIT: {
 				Span<uint16_t> dst = dst_raw.reinterpret_cast_to<uint16_t>();
 				for (size_t i = 0; i < dst.size(); ++i) {
 					dst[i] = model.color_indexes[i];
@@ -51,14 +51,14 @@ int /*Error*/ VoxelVoxLoader::load_from_file(String fpath, Ref<gd::VoxelBuffer> 
 
 	} else {
 		switch (depth) {
-			case VoxelBufferInternal::DEPTH_8_BIT: {
+			case VoxelBuffer::DEPTH_8_BIT: {
 				for (size_t i = 0; i < dst_raw.size(); ++i) {
 					const uint8_t ci = model.color_indexes[i];
 					dst_raw[i] = src_palette[ci].to_u8();
 				}
 			} break;
 
-			case VoxelBufferInternal::DEPTH_16_BIT: {
+			case VoxelBuffer::DEPTH_16_BIT: {
 				Span<uint16_t> dst = dst_raw.reinterpret_cast_to<uint16_t>();
 				for (size_t i = 0; i < dst.size(); ++i) {
 					const uint8_t ci = model.color_indexes[i];
@@ -77,7 +77,7 @@ int /*Error*/ VoxelVoxLoader::load_from_file(String fpath, Ref<gd::VoxelBuffer> 
 
 void VoxelVoxLoader::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load_from_file", "fpath", "voxels", "palette", "dst_channel"),
-			&VoxelVoxLoader::load_from_file, DEFVAL(gd::VoxelBuffer::CHANNEL_COLOR));
+			&VoxelVoxLoader::load_from_file, DEFVAL(godot::VoxelBuffer::CHANNEL_COLOR));
 }
 
 } // namespace zylann::voxel

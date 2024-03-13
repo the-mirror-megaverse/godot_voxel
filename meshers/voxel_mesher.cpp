@@ -7,16 +7,19 @@
 #include "../util/godot/classes/array_mesh.h"
 #include "../util/godot/classes/mesh.h"
 #include "../util/godot/classes/shader_material.h"
+#include "../util/profiling.h"
 #include "transvoxel/transvoxel_cell_iterator.h"
+
+using namespace zylann::godot;
 
 namespace zylann::voxel {
 
 Ref<Mesh> VoxelMesher::build_mesh(
-		Ref<gd::VoxelBuffer> voxels, TypedArray<Material> materials, Dictionary additional_data) {
-	ERR_FAIL_COND_V(voxels.is_null(), Ref<ArrayMesh>());
+		const VoxelBuffer &voxels, TypedArray<Material> materials, Dictionary additional_data) {
+	ZN_PROFILE_SCOPE();
 
 	Output output;
-	Input input = { voxels->get_buffer(), nullptr, nullptr, Vector3i(), 0, false, false, false };
+	Input input = { voxels, nullptr, nullptr, Vector3i(), 0, false, false, false };
 
 	DetailRenderingSettings detail_texture_settings;
 	detail_texture_settings.begin_lod_index = 0;
@@ -130,7 +133,7 @@ Ref<Material> VoxelMesher::get_material_by_index(unsigned int i) const {
 	return Ref<Material>();
 }
 
-bool VoxelMesher::is_mesh_empty(const std::vector<Output::Surface> &surfaces) {
+bool VoxelMesher::is_mesh_empty(const StdVector<Output::Surface> &surfaces) {
 	if (surfaces.size() == 0) {
 		return true;
 	}
@@ -146,12 +149,18 @@ Ref<ShaderMaterial> VoxelMesher::get_default_lod_material() const {
 	return Ref<ShaderMaterial>();
 }
 
+Ref<Mesh> VoxelMesher::_b_build_mesh(
+		Ref<godot::VoxelBuffer> voxels, TypedArray<Material> materials, Dictionary additional_data) {
+	ERR_FAIL_COND_V(voxels.is_null(), Ref<ArrayMesh>());
+	return build_mesh(voxels->get_buffer(), materials, additional_data);
+}
+
 void VoxelMesher::_bind_methods() {
 	// Shortcut if you want to generate a mesh directly from a fixed grid of voxels.
 	// Useful for testing the different meshers.
 	// TODO Have an object type to specify input
 	ClassDB::bind_method(D_METHOD("build_mesh", "voxel_buffer", "materials", "additional_data"),
-			&VoxelMesher::build_mesh, DEFVAL(Dictionary()));
+			&VoxelMesher::_b_build_mesh, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("get_minimum_padding"), &VoxelMesher::get_minimum_padding);
 	ClassDB::bind_method(D_METHOD("get_maximum_padding"), &VoxelMesher::get_maximum_padding);
 }

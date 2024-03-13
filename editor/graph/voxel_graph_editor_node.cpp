@@ -73,8 +73,8 @@ void VoxelGraphEditorNode::update_layout(const VoxelGraphFunction &graph) {
 	struct Output {
 		String name;
 	};
-	std::vector<Input> inputs;
-	std::vector<Output> outputs;
+	StdVector<Input> inputs;
+	StdVector<Output> outputs;
 	{
 		const unsigned int input_count = graph.get_node_input_count(_node_id);
 		const unsigned int output_count = graph.get_node_output_count(_node_id);
@@ -351,6 +351,8 @@ inline Color lerp(Color a, Color b, float t) {
 }
 
 void VoxelGraphEditorNode::_notification(int p_what) {
+	using namespace zylann::godot;
+
 	if (p_what == NOTIFICATION_DRAW) {
 		if (_is_relay) {
 			// Draw line to show that the data is directly relayed

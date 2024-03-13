@@ -112,9 +112,6 @@ void VoxelMeshBlock::_set_visible(bool visible) {
 	if (_mesh_instance.is_valid()) {
 		set_mesh_instance_visible(_mesh_instance, visible);
 	}
-	if (_static_body.is_valid()) {
-		_static_body.set_shape_enabled(0, visible);
-	}
 }
 
 void VoxelMeshBlock::set_parent_visible(bool parent_visible) {
@@ -165,7 +162,11 @@ void VoxelMeshBlock::set_collision_shape(Ref<Shape3D> shape, bool debug_collisio
 
 	_static_body.add_shape(shape);
 	_static_body.set_debug(debug_collision, *_world);
-	_static_body.set_shape_enabled(0, _visible);
+	_static_body.set_shape_enabled(0, _collision_enabled);
+}
+
+bool VoxelMeshBlock::has_collision_shape() const {
+	return _static_body.is_valid();
 }
 
 void VoxelMeshBlock::set_collision_layer(int layer) {
@@ -195,8 +196,24 @@ void VoxelMeshBlock::drop_collision() {
 	}
 }
 
+void VoxelMeshBlock::set_collision_enabled(bool enable) {
+	if (_collision_enabled == enable) {
+		return;
+	}
+	if (_static_body.is_valid()) {
+		_static_body.set_shape_enabled(0, enable);
+	}
+	_collision_enabled = enable;
+}
+
+bool VoxelMeshBlock::is_collision_enabled() const {
+	return _collision_enabled;
+}
+
 Ref<ConcavePolygonShape3D> make_collision_shape_from_mesher_output(
 		const VoxelMesher::Output &mesher_output, const VoxelMesher &mesher) {
+	using namespace zylann::godot;
+
 	Ref<ConcavePolygonShape3D> shape;
 
 	if (mesher.is_generating_collision_surface()) {
@@ -215,7 +232,7 @@ Ref<ConcavePolygonShape3D> make_collision_shape_from_mesher_output(
 
 	} else {
 		// Use render mesh
-		static thread_local std::vector<Array> tls_render_surfaces;
+		static thread_local StdVector<Array> tls_render_surfaces;
 		ZN_ASSERT(tls_render_surfaces.size() == 0);
 
 		for (unsigned int i = 0; i < mesher_output.surfaces.size(); ++i) {

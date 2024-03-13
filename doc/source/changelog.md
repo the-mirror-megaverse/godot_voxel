@@ -14,11 +14,47 @@ Semver is not yet in place, so each version can have breaking changes, although 
 Primarily developped with Godot 4.2.
 
 - Added `ZN_SpotNoise`, exposing the same algorithm as the `SpotNoise2D` and `SpotNoise3D` nodes of graph generators
+- Saving with `save_all_modified_blocks` now automatically flushes eventual caches implemented by `VoxelStream` upon completion
+- Added `VoxelStreamMemory`, which stores in memory instead of the filesystem. This is mainly for testing purposes.
+- More memory allocations are now tracked by Godot (you might notice `OS.get_static_memory_usage()` returns slightly more)
+- `VoxelTool`:
+    - Added `grow_sphere` as alternate way to progressively grow or shrink matter in a spherical region with smooth voxels (thanks to Piratux)
+- `VoxelLodTerrain`:
+    - `save_all_modified_blocks` now returns a completion tracker similar to `VoxelTerrain`
+    - Added new optional LOD streaming system `Clipbox` (advanced settings):
+        - Uses concentric boxes instead of octree traversal, although some logic remains similar to what an octree does
+        - Supports multiple viewers
+        - Supports collision-only viewers
+        - Adds secondary LOD distance parameter controlling the extents of LOD1 and beyond, separately from LOD0 (unused in the legacy system)
+        - Has its own limitations and pending improvements, may be addressed over time
+        - The original system is now referenced as "Legacy Octree".
+    - Debug drawing is now exposed as properties. Editor checkboxes were removed from the terrain menu
+- `VoxelToolLodTerrain`:
+    - Improved quality of `separate_floating_chunks` on smooth terrains by expanding cutting-off area to include more gradients
+- `VoxelStream`:
+    - Added `flush` method to force writing to the filesystem in case the stream's implementation uses caching
 
 - Fixes
     - Fixed chunk loading was prioritized incorrectly around the player in specific game start conditions
     - Fixed `"plugins_list.has(p_plugin)" is true` errors in the editor, at the cost of slight behavior changes. This was caused by existing workarounds to prevent UIs from hiding unexpectedly, which were modified to avoid the error, but are still needed unfortunately.
-    - `VoxelLodTerrain`: `VoxelTool.do_point` and `set_voxel` were not always updating meshes near chunk borders, leaving holes
+    - Fixed error `Unimplemented _get_import_order in add-on` when importing `.vox` files
+    - Fixed some corner cases where quickly leaving and coming back to an edited area would revert edits to their previous state, due to chunks reloading before those edits got saved asynchronously
+    - Fixed possible artifacts near terrain borders when using generators that sometimes avoid filling the output buffer, assuming they are initialized to defaults (issue #603)
+    - `VoxelGeneratorGraph`: 
+        - Fixed ambiguous voxel texture indices produced by `OutputSingleTexture` caused painting to fail in some situations
+        - Fixed default input values of output nodes were always 0 when using GPU generation
+    - `VoxelTool`: fixed `paste` wrongly printing an error despite working fine
+    - `VoxelToolLodTerrain`: 
+        - `do_point` and `set_voxel` were not always updating meshes near chunk borders, leaving holes
+        - `get_voxel` would always return 0 in indices and weight channels if the area was never edited, data streaming is on and the generator is a `VoxelGeneratorGraph` producing single-texture information
+        - `copy` would return incorrect buffers when used on non-edited areas when data streaming is on and a generator is assigned
+        - Fixed errors printed when moving away from edited chunks while no stream is assigned
+        - Fixed `separate_floating_chunks` was spawning chunks not exactly at the same place
+
+- Breaking changes
+    - `VoxelStream`: save and load methods for voxels now take a position in blocks instead of a position in voxels
+    - `VoxelToolMultipassGenerator`: changed `get_editable_area_max` to return an exclusive position instead of inclusive
+    - `VoxelBuffer`: `debug_print_sdf_y_slices` now returns a typed array instead of untyped array
 
 
 1.1 - 29/12/2023 - `1.1`

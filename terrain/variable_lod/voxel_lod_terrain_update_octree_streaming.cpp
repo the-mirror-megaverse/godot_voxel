@@ -5,11 +5,15 @@
 
 namespace zylann::voxel {
 
+namespace {
+
 void process_unload_data_blocks_sliding_box(VoxelLodTerrainUpdateData::State &state, VoxelData &data,
-		Vector3 p_viewer_pos, std::vector<VoxelData::BlockToSave> &blocks_to_save, bool can_save,
+		Vector3 p_viewer_pos, StdVector<VoxelData::BlockToSave> *blocks_to_save,
 		const VoxelLodTerrainUpdateData::Settings &settings) {
 	ZN_PROFILE_SCOPE_NAMED("Sliding box data unload");
 	// TODO Could it actually be enough to have a rolling update on all blocks?
+
+	ZN_ASSERT_RETURN_MSG(data.is_streaming_enabled(), "This function is not meant to run in full load mode");
 
 	// This should be the same distance relatively to each LOD
 	const int data_block_size = data.get_block_size();
@@ -22,11 +26,10 @@ void process_unload_data_blocks_sliding_box(VoxelLodTerrainUpdateData::State &st
 
 	const int lod_count = data.get_lod_count();
 
-	static thread_local std::vector<Box3i> tls_to_remove;
-	tls_to_remove.clear();
-
 	// Ignore largest lod because it can extend a little beyond due to the view distance setting.
 	// Instead, those blocks are unloaded by the octree forest management.
+	// TODO Where?
+	//
 	// Iterating from big to small LOD so we can exit earlier if bounds don't intersect.
 	for (int lod_index = lod_count - 2; lod_index >= 0; --lod_index) {
 		ZN_PROFILE_SCOPE();
@@ -39,6 +42,7 @@ void process_unload_data_blocks_sliding_box(VoxelLodTerrainUpdateData::State &st
 		const Vector3i viewer_block_pos_within_lod =
 				VoxelDataMap::voxel_to_block_b(math::floor_to_int(p_viewer_pos), block_size_po2);
 
+		// Should be correct as long as bounds size is a multiple of the biggest LOD chunk
 		const Box3i bounds_in_blocks = Box3i( //
 				bounds_in_voxels.pos >> block_size_po2, //
 				bounds_in_voxels.size >> block_size_po2);
@@ -53,18 +57,21 @@ void process_unload_data_blocks_sliding_box(VoxelLodTerrainUpdateData::State &st
 			break;
 		}
 
-		// Eliminate pending blocks that aren't needed
-
 		if (prev_box != new_box) {
+			// Eliminate pending blocks that aren't needed
 			ZN_PROFILE_SCOPE_NAMED("Unload data");
+
 			// VoxelDataLodMap::Lod &data_lod = data.lods[lod_index];
 			// RWLockWrite wlock(data_lod.map_lock);
 
-			tls_to_remove.clear();
-			prev_box.difference_to_vec(new_box, tls_to_remove);
+			const unsigned int to_save_index0 = blocks_to_save != nullptr ? blocks_to_save->size() : 0;
 
-			for (const Box3i bbox : tls_to_remove) {
-				data.unload_blocks(bbox, lod_index, &blocks_to_save);
+			prev_box.difference(new_box, [&data, &blocks_to_save, lod_index](Box3i box_to_remove) {
+				data.unload_blocks(box_to_remove, lod_index, blocks_to_save);
+			});
+
+			if (blocks_to_save != nullptr && blocks_to_save->size() > to_save_index0) {
+				add_unloaded_saving_blocks(lod, to_span(*blocks_to_save).sub(to_save_index0));
 			}
 		}
 
@@ -82,17 +89,18 @@ void process_unload_data_blocks_sliding_box(VoxelLodTerrainUpdateData::State &st
 				mesh_box = padded_new_box;
 			}
 
-			unordered_remove_if(lod.blocks_pending_update, [&lod, mesh_box](Vector3i bpos) {
-				if (mesh_box.contains(bpos)) {
-					return false;
-				} else {
-					auto mesh_block_it = lod.mesh_map_state.map.find(bpos);
-					if (mesh_block_it != lod.mesh_map_state.map.end()) {
-						mesh_block_it->second.state = VoxelLodTerrainUpdateData::MESH_NEED_UPDATE;
-					}
-					return true;
-				}
-			});
+			unordered_remove_if(lod.mesh_blocks_pending_update,
+					[&lod, mesh_box](const VoxelLodTerrainUpdateData::MeshToUpdate &mtl) {
+						if (mesh_box.contains(mtl.position)) {
+							return false;
+						} else {
+							auto mesh_block_it = lod.mesh_map_state.map.find(mtl.position);
+							if (mesh_block_it != lod.mesh_map_state.map.end()) {
+								mesh_block_it->second.state = VoxelLodTerrainUpdateData::MESH_NEED_UPDATE;
+							}
+							return true;
+						}
+					});
 		}
 
 		lod.last_viewer_data_block_pos = viewer_block_pos_within_lod;
@@ -155,9 +163,10 @@ void process_unload_mesh_blocks_sliding_box(VoxelLodTerrainUpdateData::State &st
 		{
 			ZN_PROFILE_SCOPE_NAMED("Cancel updates");
 			// Cancel block updates that are not within the new region
-			unordered_remove_if(lod.blocks_pending_update, [new_box](Vector3i bpos) { //
-				return !new_box.contains(bpos);
-			});
+			unordered_remove_if(
+					lod.mesh_blocks_pending_update, [new_box](const VoxelLodTerrainUpdateData::MeshToUpdate &mtu) { //
+						return !new_box.contains(mtu.position);
+					});
 		}
 
 		lod.last_viewer_mesh_block_pos = viewer_block_pos_within_lod;
@@ -197,8 +206,10 @@ void process_octrees_sliding_box(VoxelLodTerrainUpdateData::State &state, Vector
 
 				auto block_it = lod.mesh_map_state.map.find(bpos);
 				if (block_it != lod.mesh_map_state.map.end()) {
-					lod.mesh_blocks_to_deactivate.push_back(bpos);
-					block_it->second.active = false;
+					lod.mesh_blocks_to_deactivate_visuals.push_back(bpos);
+					lod.mesh_blocks_to_deactivate_collision.push_back(bpos);
+					block_it->second.visual_active = false;
+					block_it->second.collision_active = false;
 				}
 			}
 		};
@@ -208,7 +219,7 @@ void process_octrees_sliding_box(VoxelLodTerrainUpdateData::State &state, Vector
 			unsigned int lod_count;
 
 			void operator()(const Vector3i &pos) {
-				std::map<Vector3i, VoxelLodTerrainUpdateData::OctreeItem>::iterator it =
+				StdMap<Vector3i, VoxelLodTerrainUpdateData::OctreeItem>::iterator it =
 						state.octree_streaming.lod_octrees.find(pos);
 				if (it == state.octree_streaming.lod_octrees.end()) {
 					return;
@@ -245,7 +256,7 @@ void process_octrees_sliding_box(VoxelLodTerrainUpdateData::State &state, Vector
 
 				// Create new octree
 				// TODO Use ObjectPool to store them, deletion won't be cheap
-				std::pair<std::map<Vector3i, VoxelLodTerrainUpdateData::OctreeItem>::iterator, bool> p =
+				std::pair<StdMap<Vector3i, VoxelLodTerrainUpdateData::OctreeItem>::iterator, bool> p =
 						state.octree_streaming.lod_octrees.insert({ pos, VoxelLodTerrainUpdateData::OctreeItem() });
 				CRASH_COND(p.second == false);
 				VoxelLodTerrainUpdateData::OctreeItem &item = p.first->second;
@@ -280,14 +291,33 @@ void process_octrees_sliding_box(VoxelLodTerrainUpdateData::State &state, Vector
 	state.octree_streaming.last_octree_region_box = new_box;
 }
 
+#ifdef DEBUG_ENABLED
 inline bool check_block_sizes(int data_block_size, int mesh_block_size) {
 	return (data_block_size == 16 || data_block_size == 32) && (mesh_block_size == 16 || mesh_block_size == 32) &&
 			mesh_block_size >= data_block_size;
 }
+#endif
+
+bool add_loading_block(VoxelLodTerrainUpdateData::Lod &lod, Vector3i position) {
+	auto it = lod.loading_blocks.find(position);
+
+	if (it == lod.loading_blocks.end()) {
+		// First viewer to request it
+		VoxelLodTerrainUpdateData::LoadingDataBlock new_loading_block;
+		new_loading_block.viewers.add();
+
+		lod.loading_blocks.insert({ position, new_loading_block });
+
+		return true;
+	}
+	// TODO Current octree logic can't reliably add to refcount only once
+	// 	it->second.viewers.add();
+	return false;
+}
 
 bool check_block_mesh_updated(VoxelLodTerrainUpdateData::State &state, const VoxelData &data,
 		VoxelLodTerrainUpdateData::MeshBlockState &mesh_block, Vector3i mesh_block_pos, uint8_t lod_index,
-		std::vector<VoxelLodTerrainUpdateData::BlockLocation> &blocks_to_load,
+		StdVector<VoxelLodTerrainUpdateData::BlockToLoad> &blocks_to_load,
 		const VoxelLodTerrainUpdateData::Settings &settings) {
 	// ZN_PROFILE_SCOPE();
 
@@ -324,7 +354,7 @@ bool check_block_mesh_updated(VoxelLodTerrainUpdateData::State &state, const Vox
 					}
 				});
 
-				static thread_local std::vector<Vector3i> tls_missing;
+				static thread_local StdVector<Vector3i> tls_missing;
 				tls_missing.clear();
 
 				// Check if neighbors are loaded
@@ -335,15 +365,17 @@ bool check_block_mesh_updated(VoxelLodTerrainUpdateData::State &state, const Vox
 				// Schedule loading for missing neighbors
 				MutexLock lock(lod.loading_blocks_mutex);
 				for (const Vector3i &missing_pos : tls_missing) {
-					if (!lod.has_loading_block(missing_pos)) {
-						blocks_to_load.push_back({ missing_pos, lod_index });
-						lod.loading_blocks.insert(missing_pos);
+					if (add_loading_block(lod, missing_pos)) {
+						blocks_to_load.push_back(VoxelLodTerrainUpdateData::BlockToLoad{
+								VoxelLodTerrainUpdateData::BlockLocation{ missing_pos, lod_index },
+								TaskCancellationToken() });
 					}
 				}
 			}
 
 			if (surrounded) {
-				lod.blocks_pending_update.push_back(mesh_block_pos);
+				lod.mesh_blocks_pending_update.push_back(
+						VoxelLodTerrainUpdateData::MeshToUpdate{ mesh_block_pos, TaskCancellationToken(), true });
 				mesh_block.state = VoxelLodTerrainUpdateData::MESH_UPDATE_NOT_SENT;
 			}
 
@@ -366,7 +398,7 @@ bool check_block_mesh_updated(VoxelLodTerrainUpdateData::State &state, const Vox
 }
 
 VoxelLodTerrainUpdateData::MeshBlockState &insert_new(
-		std::unordered_map<Vector3i, VoxelLodTerrainUpdateData::MeshBlockState> &mesh_map, Vector3i pos) {
+		StdUnorderedMap<Vector3i, VoxelLodTerrainUpdateData::MeshBlockState> &mesh_map, Vector3i pos) {
 #ifdef DEBUG_ENABLED
 	// We got here because the map didn't contain the element. If it did contain it already, that's a bug.
 	static VoxelLodTerrainUpdateData::MeshBlockState s_default;
@@ -389,7 +421,7 @@ VoxelLodTerrainUpdateData::MeshBlockState &insert_new(
 
 bool check_block_loaded_and_meshed(VoxelLodTerrainUpdateData::State &state,
 		const VoxelLodTerrainUpdateData::Settings &settings, const VoxelData &data, const Vector3i &p_mesh_block_pos,
-		uint8_t lod_index, std::vector<VoxelLodTerrainUpdateData::BlockLocation> &blocks_to_load) {
+		uint8_t lod_index, StdVector<VoxelLodTerrainUpdateData::BlockToLoad> &blocks_to_load) {
 	//
 
 	if (data.is_streaming_enabled()) {
@@ -403,7 +435,7 @@ bool check_block_loaded_and_meshed(VoxelLodTerrainUpdateData::State &state,
 		// This is not known in advance when we stream it, it has to be requested.
 		// When not streaming, `block == null` is the same as `!block->has_voxels()` so we wouldn't need to enter here.
 
-		static thread_local std::vector<Vector3i> tls_missing;
+		static thread_local StdVector<Vector3i> tls_missing;
 		tls_missing.clear();
 
 		const int factor = mesh_block_size / data_block_size;
@@ -411,13 +443,21 @@ bool check_block_loaded_and_meshed(VoxelLodTerrainUpdateData::State &state,
 
 		data.get_missing_blocks(data_blocks_box, lod_index, tls_missing);
 
+		// TODO Octree logic: add refcount to data blocks that were already loaded?
+		// How do we know if it's actually the first time we check this area while blocks were already loaded?
+		// We can come here several times, with some blocks progressively loading until they are all loaded.
+		// But that means if we use `view_area`, we'll add extra refcount unwantedly.
+		// Maybe we can add state to octree nodes to check if it's the first time we request children?
+		// Another option is to do this with the sliding box logic, which is far simpler to understand.
+
 		if (tls_missing.size() > 0) {
 			VoxelLodTerrainUpdateData::Lod &lod = state.lods[lod_index];
 			MutexLock mlock(lod.loading_blocks_mutex);
 			for (const Vector3i &missing_bpos : tls_missing) {
-				if (!lod.has_loading_block(missing_bpos)) {
-					blocks_to_load.push_back({ missing_bpos, lod_index });
-					lod.loading_blocks.insert(missing_bpos);
+				if (add_loading_block(lod, missing_bpos)) {
+					blocks_to_load.push_back(VoxelLodTerrainUpdateData::BlockToLoad{
+							VoxelLodTerrainUpdateData::BlockLocation{ missing_bpos, lod_index },
+							TaskCancellationToken() });
 				}
 			}
 			return false;
@@ -433,6 +473,8 @@ bool check_block_loaded_and_meshed(VoxelLodTerrainUpdateData::State &state,
 		// we could defer additions to the end of octree fitting.
 		RWLockWrite wlock(lod.mesh_map_state.map_lock);
 		mesh_block = &insert_new(lod.mesh_map_state.map, p_mesh_block_pos);
+		mesh_block->mesh_viewers.add();
+		mesh_block->collision_viewers.add();
 	} else {
 		mesh_block = &mesh_block_it->second;
 	}
@@ -442,7 +484,7 @@ bool check_block_loaded_and_meshed(VoxelLodTerrainUpdateData::State &state,
 
 void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 		const VoxelLodTerrainUpdateData::Settings &settings, VoxelData &data, Vector3 p_viewer_pos,
-		std::vector<VoxelLodTerrainUpdateData::BlockLocation> &data_blocks_to_load) {
+		StdVector<VoxelLodTerrainUpdateData::BlockToLoad> &data_blocks_to_load) {
 	//
 	ZN_PROFILE_SCOPE();
 
@@ -478,7 +520,7 @@ void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 			VoxelLodTerrainUpdateData::State &state;
 			const VoxelLodTerrainUpdateData::Settings &settings;
 			VoxelData &data;
-			std::vector<VoxelLodTerrainUpdateData::BlockLocation> &data_blocks_to_load;
+			StdVector<VoxelLodTerrainUpdateData::BlockToLoad> &data_blocks_to_load;
 			Vector3i block_offset_lod0;
 			unsigned int blocked_count = 0;
 			float lod_distance_octree_space;
@@ -495,8 +537,10 @@ void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 				CRASH_COND(mesh_block_it->second.state != VoxelLodTerrainUpdateData::MESH_UP_TO_DATE);
 
 				// self->set_mesh_block_active(*block, true);
-				lod.mesh_blocks_to_activate.push_back(bpos);
-				mesh_block_it->second.active = true;
+				lod.mesh_blocks_to_activate_visuals.push_back(bpos);
+				lod.mesh_blocks_to_activate_collision.push_back(bpos);
+				mesh_block_it->second.visual_active = true;
+				mesh_block_it->second.collision_active = true;
 				lods_to_update_transitions |= (0b111 << lod_index);
 			}
 
@@ -507,8 +551,10 @@ void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 
 				if (mesh_block_it != lod.mesh_map_state.map.end()) {
 					// self->set_mesh_block_active(*block, false);
-					mesh_block_it->second.active = false;
-					lod.mesh_blocks_to_deactivate.push_back(bpos);
+					mesh_block_it->second.visual_active = false;
+					mesh_block_it->second.collision_active = false;
+					lod.mesh_blocks_to_deactivate_visuals.push_back(bpos);
+					lod.mesh_blocks_to_deactivate_collision.push_back(bpos);
 					lods_to_update_transitions |= (0b111 << lod_index);
 				}
 			}
@@ -525,8 +571,10 @@ void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 				if (mesh_block_it != lod.mesh_map_state.map.end() &&
 						mesh_block_it->second.state == VoxelLodTerrainUpdateData::MESH_UP_TO_DATE) {
 					// self->set_mesh_block_active(*block, true);
-					mesh_block_it->second.active = true;
-					lod.mesh_blocks_to_activate.push_back(bpos);
+					mesh_block_it->second.visual_active = true;
+					mesh_block_it->second.collision_active = true;
+					lod.mesh_blocks_to_activate_visuals.push_back(bpos);
+					lod.mesh_blocks_to_activate_collision.push_back(bpos);
 					lods_to_update_transitions |= (0b111 << lod_index);
 				}
 			}
@@ -638,65 +686,21 @@ void process_octrees_fitting(VoxelLodTerrainUpdateData::State &state,
 	state.stats.blocked_lods = blocked_octree_nodes;
 	state.octree_streaming.had_blocked_octree_nodes_previous_update = blocked_octree_nodes > 0;
 
-	// TODO Optimize: this works but it's not smart.
-	// It doesn't take too long (100 microseconds when octrees update with lod distance 60).
-	// We used to only update positions based on which blocks were added/removed in the octree update,
-	// which was faster than this. However it missed some spots, which caused annoying cracks to show up.
-	// So instead, when any block changes state in LOD N, we update all transitions in LODs N-1, N, and N+1.
-	// It is unclear yet why the old approach didn't work, maybe because it didn't properly made N-1 and N+1 update.
-	// If you find a better approach, it has to comply with the validation check below.
-	if (lods_to_update_transitions != 0) {
-		ZN_PROFILE_SCOPE_NAMED("Transition masks");
-		lods_to_update_transitions >>= 1;
-		for (unsigned int lod_index = 0; lod_index < lod_count; ++lod_index) {
-			if ((lods_to_update_transitions & (1 << lod_index)) == 0) {
-				continue;
-			}
-			VoxelLodTerrainUpdateData::Lod &lod = state.lods[lod_index];
-			RWLockRead rlock(lod.mesh_map_state.map_lock);
-			for (auto it = lod.mesh_map_state.map.begin(); it != lod.mesh_map_state.map.end(); ++it) {
-				if (it->second.active) {
-					const uint8_t recomputed_mask =
-							VoxelLodTerrainUpdateTask::get_transition_mask(state, it->first, lod_index, lod_count);
-					if (recomputed_mask != it->second.transition_mask) {
-						it->second.transition_mask = recomputed_mask;
-						lod.mesh_blocks_to_update_transitions.push_back(
-								VoxelLodTerrainUpdateData::TransitionUpdate{ it->first, recomputed_mask });
-					}
-				}
-			}
-		}
-	}
-#if 0
-	// DEBUG: Validation check for transition mask updates.
-	{
-		ZN_PROFILE_SCOPE_NAMED("Transition checks");
-		for (unsigned int lod_index = 0; lod_index < lod_count; ++lod_index) {
-			const VoxelLodTerrainUpdateData::Lod &lod = state.lods[lod_index];
-			RWLockRead rlock(lod.mesh_map_state.map_lock);
-			for (auto it = lod.mesh_map_state.map.begin(); it != lod.mesh_map_state.map.end(); ++it) {
-				if (it->second.active) {
-					const uint8_t recomputed_mask =
-							VoxelLodTerrainUpdateTask::get_transition_mask(state, it->first, lod_index, lod_count);
-					CRASH_COND(recomputed_mask != it->second.transition_mask);
-				}
-			}
-		}
-	}
-#endif
+	update_transition_masks(state, lods_to_update_transitions, lod_count, false);
 }
 
+} // namespace
+
 void process_octree_streaming(VoxelLodTerrainUpdateData::State &state, VoxelData &data, Vector3 viewer_pos,
-		std::vector<VoxelData::BlockToSave> &data_blocks_to_save,
-		std::vector<VoxelLodTerrainUpdateData::BlockLocation> &data_blocks_to_load,
-		const VoxelLodTerrainUpdateData::Settings &settings, Ref<VoxelStream> stream, bool stream_enabled) {
+		StdVector<VoxelData::BlockToSave> *data_blocks_to_save,
+		StdVector<VoxelLodTerrainUpdateData::BlockToLoad> &data_blocks_to_load,
+		const VoxelLodTerrainUpdateData::Settings &settings, bool stream_enabled) {
 	ZN_PROFILE_SCOPE();
 
 	// Unload data blocks falling out of block region extent.
 	// We only unload data if data streaming is enabled. Otherwise it's always loaded.
 	if (data.is_streaming_enabled()) {
-		process_unload_data_blocks_sliding_box(
-				state, data, viewer_pos, data_blocks_to_save, stream.is_valid(), settings);
+		process_unload_data_blocks_sliding_box(state, data, viewer_pos, data_blocks_to_save, settings);
 	}
 
 	// Unload mesh blocks falling out of block region extent

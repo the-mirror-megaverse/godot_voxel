@@ -9,7 +9,7 @@
 
 #include "../../containers/span.h"
 
-namespace zylann {
+namespace zylann::godot {
 
 template <typename T>
 inline void copy_to(TypedArray<T> &dst, Span<const T> src) {
@@ -27,16 +27,16 @@ inline void copy_to(TypedArray<T> &dst, Span<const Ref<T>> src) {
 	}
 }
 
-template <typename T>
-inline void copy_to(std::vector<T> &dst, const TypedArray<T> &src) {
+template <typename T, typename TAllocator>
+inline void copy_to(std::vector<T, TAllocator> &dst, const TypedArray<T> &src) {
 	dst.resize(src.size());
 	for (int i = 0; i < src.size(); ++i) {
 		dst[i] = src[i];
 	}
 }
 
-template <typename T>
-inline void copy_to(std::vector<Ref<T>> &dst, const TypedArray<T> &src) {
+template <typename T, typename TAllocator>
+inline void copy_to(std::vector<Ref<T>, TAllocator> &dst, const TypedArray<T> &src) {
 	dst.resize(src.size());
 	for (int i = 0; i < src.size(); ++i) {
 		dst[i] = src[i];
@@ -57,6 +57,6 @@ inline TypedArray<T> to_typed_array(Span<const Ref<T>> src) {
 	return array;
 }
 
-} // namespace zylann
+} // namespace zylann::godot
 
 #endif // ZN_GODOT_TYPED_ARRAY_H

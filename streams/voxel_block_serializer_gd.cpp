@@ -3,7 +3,9 @@
 #include "../util/godot/core/packed_arrays.h"
 #include "voxel_block_serializer.h"
 
-namespace zylann::voxel::gd {
+using namespace zylann::godot;
+
+namespace zylann::voxel::godot {
 
 int VoxelBlockSerializer::serialize_to_stream_peer(Ref<StreamPeer> peer, Ref<VoxelBuffer> voxel_buffer, bool compress) {
 	ERR_FAIL_COND_V(voxel_buffer.is_null(), 0);
@@ -30,7 +32,7 @@ void VoxelBlockSerializer::deserialize_from_stream_peer(
 	ERR_FAIL_COND(size <= 0);
 
 	if (decompress) {
-		std::vector<uint8_t> &compressed_data = BlockSerializer::get_tls_compressed_data();
+		StdVector<uint8_t> &compressed_data = BlockSerializer::get_tls_compressed_data();
 		compressed_data.resize(size);
 		const Error err = stream_peer_get_data(**peer, to_span(compressed_data));
 		ERR_FAIL_COND(err != OK);
@@ -39,7 +41,7 @@ void VoxelBlockSerializer::deserialize_from_stream_peer(
 		ERR_FAIL_COND(!success);
 
 	} else {
-		std::vector<uint8_t> &data = BlockSerializer::get_tls_data();
+		StdVector<uint8_t> &data = BlockSerializer::get_tls_data();
 		data.resize(size);
 		const Error err = stream_peer_get_data(**peer, to_span(data));
 		ERR_FAIL_COND(err != OK);
@@ -99,4 +101,4 @@ void VoxelBlockSerializer::_bind_methods() {
 			&VoxelBlockSerializer::deserialize_from_byte_array);
 }
 
-} // namespace zylann::voxel::gd
+} // namespace zylann::voxel::godot

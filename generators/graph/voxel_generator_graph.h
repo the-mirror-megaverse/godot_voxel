@@ -1,7 +1,15 @@
 #ifndef VOXEL_GENERATOR_GRAPH_H
 #define VOXEL_GENERATOR_GRAPH_H
 
+#include "../../util/containers/fixed_array.h"
+#include "../../util/containers/span.h"
+#include "../../util/containers/std_vector.h"
+#include "../../util/godot/core/dictionary.h"
 #include "../../util/macros.h"
+#include "../../util/math/vector2.h"
+#include "../../util/math/vector3.h"
+#include "../../util/math/vector3f.h"
+#include "../../util/math/vector3i.h"
 #include "../../util/thread/rw_lock.h"
 #include "../voxel_generator.h"
 #include "program_graph.h"
@@ -13,6 +21,8 @@
 ZN_GODOT_FORWARD_DECLARE(class Image)
 
 namespace zylann::voxel {
+
+class VoxelBuffer;
 
 // Uses an internal VoxelGraphFunction to generate voxel data.
 class VoxelGeneratorGraph : public VoxelGenerator {
@@ -106,7 +116,7 @@ public:
 		uint32_t microseconds;
 	};
 
-	float debug_measure_microseconds_per_voxel(bool singular, std::vector<NodeProfilingInfo> *node_profiling_info);
+	float debug_measure_microseconds_per_voxel(bool singular, StdVector<NodeProfilingInfo> *node_profiling_info);
 
 	void debug_load_waves_preset();
 
@@ -138,8 +148,7 @@ private:
 	};
 
 	static void gather_indices_and_weights(Span<const WeightOutput> weight_outputs, const pg::Runtime::State &state,
-			Vector3i rmin, Vector3i rmax, int ry, VoxelBufferInternal &out_voxel_buffer,
-			FixedArray<uint8_t, 4> spare_indices);
+			Vector3i rmin, Vector3i rmax, int ry, VoxelBuffer &out_voxel_buffer, FixedArray<uint8_t, 4> spare_indices);
 
 	static void _bind_methods();
 
@@ -228,11 +237,11 @@ private:
 	RWLock _runtime_lock;
 
 	struct Cache {
-		std::vector<float> x_cache;
-		std::vector<float> y_cache;
-		std::vector<float> z_cache;
-		std::vector<float> input_sdf_slice_cache;
-		std::vector<float> input_sdf_full_cache;
+		StdVector<float> x_cache;
+		StdVector<float> y_cache;
+		StdVector<float> z_cache;
+		StdVector<float> input_sdf_slice_cache;
+		StdVector<float> input_sdf_full_cache;
 		// TODO Use the runtime and state from `VoxelGraphFunction`
 		pg::Runtime::State state;
 		pg::Runtime::ExecutionMap optimized_execution_map;

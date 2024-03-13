@@ -96,15 +96,33 @@ For example, the *implementation* of Transvoxel has very little dependencies on 
 
 Same for `VoxelBuffer`: this class is actually not a full-fledged Godot object. It is much lighter than that, because it can have thousands of instances, or even supports being allocated on the stack and moved. It is exposed as a wrapper object instead for the few cases where scripters have to interact with it.
 
+### Namespaces
+
+Namespace                 | Description
+--------------------------|--------------
+`zylann`                  | General-purpose, not necessarily related to Godot
+`zylann::math`            | Math utilities
+`zylann::godot`           | General-purpose Godot utilities
+`zylann::voxel`           | Voxel engine
+`zylann::voxel::ops`      | Voxel editing utilities
+`zylann::voxel::godot`    | Some classes have Godot-specific wrappers in order to be exposed to scripting APIs, which are in this namespace to allow using the same name as in `zylann::voxel`
+`zylann::voxel::magica`   | MagicaVoxel functions
+`zylann::voxel::pg`       | Graph processing functionality
+
+There might be more smaller namespaces that can be documented in code.
+
 
 Tests
 -------
 
-Tests are not mandatory, but if there is time to make new ones, it's good to have.
+Tests are not mandatory, but if there is time to make new ones, it's good to have. Full coverage isn't really a goal, but it's useful when troubleshooting some bugs and ensuring they don't come back.
 
-The module recently includes a `tests/` folder, which contains unit tests. At time of writing, there are very few of them, and I still don't write new ones often. As a game developer, writing unit tests for everything isn't part of my habits, but I recognize that for a module like this one, it is always better to have some if a feature can be easily tested. It even helped fix a few bugs already. 
+### Internal tests
 
-No test framework is used at the moment, instead they just run by either printing an error when they fail or not. In Godot 4 the Doctest framework is used, so we may see if we can migrate to that later.
+The module contains internal tests in the `tests/` folder. No test framework is used at the moment, instead they just run by either printing an error when they fail or not.
+
+Tests will only be compiled if `voxel_tests=yes` is passed as parameter to the SCons command line.
+Tests will run on startup if `--run_voxel_tests` is passed as command line parameter when launching Godot.
 
 
 Threads
@@ -170,12 +188,16 @@ For the most part, use `clang-format` and follow Godot conventions.
 - Avoid using macros to define logic or constants. Prefer `static const`, `constexpr` and `inline` functions.
 - Prefer adding `const` to variables that won't change after being initialized (function arguments are spared for now as it would make signatures very long)
 - Don't exploit booleanization when an explicit alternative exists. Example: use `if (a == nullptr)` instead of `if (!a)`
-- If possible, avoid plain arrays like `int a[42]`. Debuggers don't catch overruns on them. Prefer using wrappers such as `FixedArray` and `Span` (or `std::array` and `std::span` once [this](https://github.com/godotengine/godot/issues/31608) is fixed)
+- If possible, avoid plain arrays like `int a[42]`. Debuggers don't catch overruns on them. Prefer using wrappers such as `FixedArray` and `Span`.
 - Use `uint32_t`, `uint16_t`, `uint8_t` in case integer size matters.
 - If possible, use forward declarations in headers instead of including files
+- `#include` what you use, don't assume a header transitively includes things. This has been broadly ignored for a while, but new code may follow it. `util/godot` micro-headers are an exception.
 - Don't do `using namespace` in headers (Except with `godot::`, but that's only to help supporting GDExtension using the same codebase, since Godot core does not have this namespace).
 - `mutable` must ONLY be used for thread synchronization primitives. Do not use it with "cache data" to make getters `const`, as it can be misleading in multi-threaded context.
-- No use of exceptions
+- Use `ZN_NEW` and `ZN_DELETE` instead of `new` and `delete` on types that don't derive from Godot `Object`. This is intented for code that may be independent from Godot, yet be tracked in Godot's default allocator when used.
+- Use `ZN_ALLOC` and `ZN_FREE` instead of `malloc` and `free`. This is intented for code that may be independent from Godot, yet be tracked in Godot's default allocator when used.
+- Prefer anonymous namespaces instead of `static` for internal functions that only appear within `.cpp` files.
+- When using standard library containers, prefer aliases from `util/containers/` such as `StdVector`. These are using Godot's allocation functions so memory will be tracked.
 
 ### Error handling
 
@@ -202,7 +224,7 @@ In performance-critical areas which run a lot:
 
 - In areas where performance matters, use the most direct APIs for the job. Especially, don't use nodes. See `RenderingServer` and `PhysicsServer`.
 - Only expose a function to the script API if it is safe to use and guaranteed to remain present for a while
-- When possible, use `memnew`, `memdelete`, `memalloc` and `memfree` so memory usage is counted within Godot monitors
+- Use `memnew` and `memdelete` instead of `new` and `delete` on types derived from Godot `Object`
 - Don't leave random prints. For verbose mode you may also use `ZN_PRINT_VERBOSE()` instead of `print_verbose()`.
 - Use `int` as argument for functions exposed to scripts if they don't need to exceed 2^31, even if they are never negative, so errors are clearer if the user makes a mistake
 - If possible, keep Godot usage to a minimum, to make the code more portable, and sometimes faster for future GDExtension. Some areas use custom equivalents defined in `util/`.
@@ -321,7 +343,7 @@ Profile with Tracy
 
 This module contains macros to profile specific code sections. By default, these macros expand to [Tracy Profiler](https://github.com/wolfpld/tracy) zones. It allows to check how long code takes to run, and displays it in a timeline.
 
-It was tested with Tracy 0.7.8.
+It was tested with [Tracy 0.10](https://github.com/wolfpld/tracy/releases/tag/v0.10).
 
 ![Tracy screenshot](images/tracy.webp)
 
@@ -370,25 +392,20 @@ void process_every_frame() {
 }
 ```
 
-### Adding Tracy to Godot
+### Adding Tracy
 
-To add Tracy support, clone it under `thirdparty/tracy` (Godot's `thirdparty` folder, not the voxel module). Then in `modules/voxel/SCsub`, add the following lines:
+To add Tracy support, clone it under `thirdparty/tracy` (Godot's `thirdparty` folder, not the module).
+Then compile the engine by including `tracy=yes` in the SCons command line.
 
-```python
-# tracy library
-env.Append(CPPDEFINES="TRACY_ENABLE")
-env_voxel.Append(CPPDEFINES="TRACY_ENABLE")
-voxel_files += ["#thirdparty/tracy/TracyClient.cpp"]
-```
+Tracy isn't a feature of Godot's build system, so internally some of the work is actually done in the voxel module's build script.
 
-Those lines might already be there, if so just uncomment them.
-
-Once you are done profiling, don't forget to remove these lines, otherwise profiling data will accumulate in memory without being retrieved.
+Once you are done profiling, don't forget to switch back to a normal build, otherwise profiling data will accumulate in memory without being retrieved.
 
 !!! note
     Tracy has a concept of frame mark, which is usually provided by the application, to tell the profiler when each frame begins. Godot does not provide profiling macros natively, so the frame mark was hacked into `VoxelEngine` process function. This allows to see frames of the main thread in the timeline, but they will be offset from their real beginning.
 
-This way of integrating Tracy was based on this [commit by vblanco](https://github.com/vblanco20-1/godot/commit/2c5613abb8c9fdb5c4bfe3b52fdb665a91b43579)
+!!! warning
+    Profiling data can use a lot of memory (can reach gigabytes of RAM), so make sure your computer has enough and keep your session duration in check.
 
 
 Preprocessor macros
@@ -400,7 +417,7 @@ Some can be specified through SCons command line parameters.
 - `MESHOPTIMIZER_ZYLANN_NEVER_COLLAPSE_BORDERS`: this one must be defined to fix an issue with `MeshOptimizer`. See [https://github.com/zeux/meshoptimizer/issues/311](https://github.com/zeux/meshoptimizer/issues/311)
 - `MESHOPTIMIZER_ZYLANN_WRAP_LIBRARY_IN_NAMESPACE`: this one must be defined to prevent conflict with Godot's own version of MeshOptimizer. See [https://github.com/zeux/meshoptimizer/issues/311#issuecomment-955750624](https://github.com/zeux/meshoptimizer/issues/311#issuecomment-955750624)
 - `VOXEL_ENABLE_FAST_NOISE_2`: if defined, the module will compile with integrated support for SIMD noise using FastNoise2. It is optional in case it causes problem on some compilers or platforms. SCons parameter: `voxel_fast_noise_2=yes`
-- `VOXEL_RUN_TESTS`: If `True`, tests will be compiled and run on startup to verify if some features of the engine still work correctly. It is off by default in production builds. This is mostly for debug builds when doing C++ development on the module. SCons parameter: `voxel_tests=yes`
+- `VOXEL_TESTS`: If `True`, tests will be compiled as part of the build (SCons parameter: `voxel_tests=yes`). They will run on startup if the `--run_voxel_tests` command line argument is passed. 
 - `ZN_GODOT`: must be defined when compiling this project as a module.
 - `ZN_GODOT_EXTENSION`: must be defined when compiling this project as a GDExtension.
 
@@ -431,7 +448,7 @@ Writing a custom C++ module directly in Godot is one way to access features of G
 You can include files from the voxel module by using `modules/voxel/` in your includes:
 
 ```cpp
-#include <modules/voxel/storage/voxel_buffer_internal.h>
+#include <modules/voxel/storage/voxel_buffer.h>
 ```
 
 You will also need to define preprocessor macros in your `SCsub` file:

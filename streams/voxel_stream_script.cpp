@@ -7,7 +7,7 @@ namespace zylann::voxel {
 void VoxelStreamScript::load_voxel_block(VoxelStream::VoxelQueryData &query_data) {
 	Variant output;
 	// Create a temporary wrapper so Godot can pass it to scripts
-	Ref<gd::VoxelBuffer> buffer_wrapper;
+	Ref<godot::VoxelBuffer> buffer_wrapper;
 	buffer_wrapper.instantiate();
 	buffer_wrapper->get_buffer().copy_format(query_data.voxel_buffer);
 	buffer_wrapper->get_buffer().create(query_data.voxel_buffer.get_size());
@@ -16,7 +16,7 @@ void VoxelStreamScript::load_voxel_block(VoxelStream::VoxelQueryData &query_data
 
 	int res;
 #if defined(ZN_GODOT)
-	if (GDVIRTUAL_CALL(_load_voxel_block, buffer_wrapper, query_data.origin_in_voxels, query_data.lod, res)) {
+	if (GDVIRTUAL_CALL(_load_voxel_block, buffer_wrapper, query_data.position_in_blocks, query_data.lod_index, res)) {
 		// Check if the return enum is valid
 		ERR_FAIL_INDEX(res, _RESULT_COUNT);
 		// If the block was found, grab its data from the script-facing object to our internal buffer
@@ -34,11 +34,11 @@ void VoxelStreamScript::load_voxel_block(VoxelStream::VoxelQueryData &query_data
 }
 
 void VoxelStreamScript::save_voxel_block(VoxelStream::VoxelQueryData &query_data) {
-	Ref<gd::VoxelBuffer> buffer_wrapper;
+	Ref<godot::VoxelBuffer> buffer_wrapper;
 	buffer_wrapper.instantiate();
-	query_data.voxel_buffer.duplicate_to(buffer_wrapper->get_buffer(), true);
+	query_data.voxel_buffer.copy_to(buffer_wrapper->get_buffer(), true);
 #if defined(ZN_GODOT)
-	if (!GDVIRTUAL_CALL(_save_voxel_block, buffer_wrapper, query_data.origin_in_voxels, query_data.lod)) {
+	if (!GDVIRTUAL_CALL(_save_voxel_block, buffer_wrapper, query_data.position_in_blocks, query_data.lod_index)) {
 		WARN_PRINT_ONCE("VoxelStreamScript::_save_voxel_block is unimplemented!");
 	}
 #else
@@ -61,8 +61,8 @@ int VoxelStreamScript::get_used_channels_mask() const {
 void VoxelStreamScript::_bind_methods() {
 #if defined(ZN_GODOT)
 	// TODO Test if GDVIRTUAL can print errors properly when GDScript fails inside a different thread.
-	GDVIRTUAL_BIND(_load_voxel_block, "out_buffer", "origin_in_voxels", "lod");
-	GDVIRTUAL_BIND(_save_voxel_block, "buffer", "origin_in_voxels", "lod");
+	GDVIRTUAL_BIND(_load_voxel_block, "out_buffer", "position_in_blocks", "lod");
+	GDVIRTUAL_BIND(_save_voxel_block, "buffer", "position_in_blocks", "lod");
 	GDVIRTUAL_BIND(_get_used_channels_mask);
 #endif
 

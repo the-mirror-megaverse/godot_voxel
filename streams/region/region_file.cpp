@@ -36,7 +36,7 @@ bool RegionFormat::validate() const {
 	// Test worst case limits (this does not include arbitrary metadata, so it can't be 100% accurrate...)
 	size_t bytes_per_block = 0;
 	for (unsigned int i = 0; i < channel_depths.size(); ++i) {
-		bytes_per_block += VoxelBufferInternal::get_depth_bit_count(channel_depths[i]) / 8;
+		bytes_per_block += VoxelBuffer::get_depth_bit_count(channel_depths[i]) / 8;
 	}
 	bytes_per_block *= Vector3iUtil::get_volume(Vector3iUtil::create(1 << block_size_po2));
 	const size_t sectors_per_block = (bytes_per_block - 1) / sector_size + 1;
@@ -47,26 +47,29 @@ bool RegionFormat::validate() const {
 	return true;
 }
 
-bool RegionFormat::verify_block(const VoxelBufferInternal &block) const {
+bool RegionFormat::verify_block(const VoxelBuffer &block) const {
 	ERR_FAIL_COND_V(block.get_size() != Vector3iUtil::create(1 << block_size_po2), false);
-	for (unsigned int i = 0; i < VoxelBufferInternal::MAX_CHANNELS; ++i) {
+	for (unsigned int i = 0; i < VoxelBuffer::MAX_CHANNELS; ++i) {
 		ERR_FAIL_COND_V(block.get_channel_depth(i) != channel_depths[i], false);
 	}
 	return true;
 }
 
-static uint32_t get_header_size_v3(const RegionFormat &format) {
+namespace {
+
+uint32_t get_header_size_v3(const RegionFormat &format) {
 	// Which file offset blocks data is starting
 	// magic + version + blockinfos
 	return MAGIC_AND_VERSION_SIZE + FIXED_HEADER_DATA_SIZE + (format.has_palette ? PALETTE_SIZE_IN_BYTES : 0) +
 			Vector3iUtil::get_volume(format.region_size) * sizeof(RegionBlockInfo);
 }
 
-static bool save_header(
-		FileAccess &f, uint8_t version, const RegionFormat &format, const std::vector<RegionBlockInfo> &block_infos) {
+bool save_header(
+		FileAccess &f, uint8_t version, const RegionFormat &format, const StdVector<RegionBlockInfo> &block_infos) {
+	// `f` could be anywhere in the file, we seek to ensure we start at the beginning
 	f.seek(0);
 
-	store_buffer(f, Span<const uint8_t>(reinterpret_cast<const uint8_t *>(FORMAT_REGION_MAGIC), 4));
+	godot::store_buffer(f, Span<const uint8_t>(reinterpret_cast<const uint8_t *>(FORMAT_REGION_MAGIC), 4));
 	f.store_8(version);
 
 	f.store_8(format.block_size_po2);
@@ -95,7 +98,7 @@ static bool save_header(
 	}
 
 	// TODO Deal with endianess, this should be little-endian
-	store_buffer(f,
+	godot::store_buffer(f,
 			Span<const uint8_t>(reinterpret_cast<const uint8_t *>(block_infos.data()),
 					block_infos.size() * sizeof(RegionBlockInfo)));
 
@@ -107,14 +110,14 @@ static bool save_header(
 	return true;
 }
 
-static bool load_header(
-		FileAccess &f, uint8_t &out_version, RegionFormat &out_format, std::vector<RegionBlockInfo> &out_block_infos) {
+bool load_header(
+		FileAccess &f, uint8_t &out_version, RegionFormat &out_format, StdVector<RegionBlockInfo> &out_block_infos) {
 	ERR_FAIL_COND_V(f.get_position() != 0, false);
 	ERR_FAIL_COND_V(f.get_length() < MAGIC_AND_VERSION_SIZE, false);
 
 	FixedArray<char, 5> magic;
 	fill(magic, '\0');
-	ERR_FAIL_COND_V(get_buffer(f, Span<uint8_t>(reinterpret_cast<uint8_t *>(magic.data()), 4)) != 4, false);
+	ERR_FAIL_COND_V(godot::get_buffer(f, Span<uint8_t>(reinterpret_cast<uint8_t *>(magic.data()), 4)) != 4, false);
 	ERR_FAIL_COND_V(strcmp(magic.data(), FORMAT_REGION_MAGIC) != 0, false);
 
 	const uint8_t version = f.get_8();
@@ -128,8 +131,8 @@ static bool load_header(
 
 		for (unsigned int i = 0; i < out_format.channel_depths.size(); ++i) {
 			const uint8_t d = f.get_8();
-			ERR_FAIL_COND_V(d >= VoxelBufferInternal::DEPTH_COUNT, false);
-			out_format.channel_depths[i] = static_cast<VoxelBufferInternal::Depth>(d);
+			ERR_FAIL_COND_V(d >= VoxelBuffer::DEPTH_COUNT, false);
+			out_format.channel_depths[i] = static_cast<VoxelBuffer::Depth>(d);
 		}
 
 		out_format.sector_size = f.get_16();
@@ -160,11 +163,13 @@ static bool load_header(
 
 	// TODO Deal with endianess
 	const size_t blocks_len = out_block_infos.size() * sizeof(RegionBlockInfo);
-	const size_t read_size = get_buffer(f, Span<uint8_t>((uint8_t *)out_block_infos.data(), blocks_len));
+	const size_t read_size = godot::get_buffer(f, Span<uint8_t>((uint8_t *)out_block_infos.data(), blocks_len));
 	ERR_FAIL_COND_V(read_size != blocks_len, false);
 
 	return true;
 }
+
+} // namespace
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -172,7 +177,7 @@ RegionFile::RegionFile() {
 	// Defaults
 	_header.format.block_size_po2 = 4;
 	_header.format.region_size = Vector3i(16, 16, 16);
-	fill(_header.format.channel_depths, VoxelBufferInternal::DEPTH_8_BIT);
+	fill(_header.format.channel_depths, VoxelBuffer::DEPTH_8_BIT);
 	_header.format.sector_size = 512;
 }
 
@@ -188,7 +193,7 @@ Error RegionFile::open(const String &fpath, bool create_if_not_found) {
 	Error file_error;
 	// Open existing file for read and write permissions. This should not create the file if it doesn't exist.
 	// Note, there is no read-only mode supported, because there was no need for it yet.
-	Ref<FileAccess> f = open_file(fpath, FileAccess::READ_WRITE, file_error);
+	Ref<FileAccess> f = godot::open_file(fpath, FileAccess::READ_WRITE, file_error);
 	if (file_error != OK) {
 		if (create_if_not_found) {
 			CRASH_COND(f != nullptr);
@@ -201,7 +206,7 @@ Error RegionFile::open(const String &fpath, bool create_if_not_found) {
 			}
 
 			// This time, we attempt to create the file
-			f = open_file(fpath, FileAccess::WRITE_READ, file_error);
+			f = godot::open_file(fpath, FileAccess::WRITE_READ, file_error);
 			if (file_error != OK) {
 				ERR_PRINT(String("Failed to create file {0}").format(varray(fpath)));
 				return file_error;
@@ -232,7 +237,7 @@ Error RegionFile::open(const String &fpath, bool create_if_not_found) {
 	};
 
 	// Filter only present blocks and keep the index around because it represents the 3D position of the block
-	std::vector<BlockInfoAndIndex> blocks_sorted_by_offset;
+	StdVector<BlockInfoAndIndex> blocks_sorted_by_offset;
 	for (unsigned int i = 0; i < _header.blocks.size(); ++i) {
 		const RegionBlockInfo b = _header.blocks[i];
 		if (b.data != 0) {
@@ -269,7 +274,6 @@ Error RegionFile::close() {
 	Error err = OK;
 	if (_file_access != nullptr) {
 		if (_header_modified) {
-			_file_access->seek(MAGIC_AND_VERSION_SIZE);
 			if (!save_header(**_file_access)) {
 				// TODO Need to do a big pass on these errors codes so we can return meaningful ones...
 				// Godot codes are quite limited
@@ -284,6 +288,16 @@ Error RegionFile::close() {
 
 bool RegionFile::is_open() const {
 	return _file_access != nullptr;
+}
+
+void RegionFile::flush() {
+	if (!_file_access.is_valid()) {
+		return;
+	}
+	if (_header_modified) {
+		ZN_ASSERT_RETURN(save_header(**_file_access));
+	}
+	_file_access->flush();
 }
 
 bool RegionFile::set_format(const RegionFormat &format) {
@@ -310,7 +324,7 @@ bool RegionFile::is_valid_block_position(const Vector3 position) const {
 			position.z < _header.format.region_size.z;
 }
 
-Error RegionFile::load_block(Vector3i position, VoxelBufferInternal &out_block) {
+Error RegionFile::load_block(Vector3i position, VoxelBuffer &out_block) {
 	ERR_FAIL_COND_V(_file_access.is_null(), ERR_FILE_CANT_READ);
 	FileAccess &f = **_file_access;
 
@@ -343,7 +357,7 @@ Error RegionFile::load_block(Vector3i position, VoxelBufferInternal &out_block) 
 	return OK;
 }
 
-Error RegionFile::save_block(Vector3i position, VoxelBufferInternal &block) {
+Error RegionFile::save_block(Vector3i position, VoxelBuffer &block) {
 	ERR_FAIL_COND_V(_header.format.verify_block(block) == false, ERR_INVALID_PARAMETER);
 	ERR_FAIL_COND_V(!is_valid_block_position(position), ERR_INVALID_PARAMETER);
 
@@ -372,7 +386,7 @@ Error RegionFile::save_block(Vector3i position, VoxelBufferInternal &block) {
 		ERR_FAIL_COND_V(!res.success, ERR_INVALID_PARAMETER);
 		f.store_32(res.data.size());
 		const unsigned int written_size = sizeof(uint32_t) + res.data.size();
-		store_buffer(f, to_span(res.data));
+		godot::store_buffer(f, to_span(res.data));
 
 		const unsigned int end_pos = f.get_position();
 		CRASH_COND_MSG(written_size != (end_pos - block_offset),
@@ -400,7 +414,7 @@ Error RegionFile::save_block(Vector3i position, VoxelBufferInternal &block) {
 
 		BlockSerializer::SerializeResult res = BlockSerializer::serialize_and_compress(block);
 		ERR_FAIL_COND_V(!res.success, ERR_INVALID_PARAMETER);
-		const std::vector<uint8_t> &data = res.data;
+		const StdVector<uint8_t> &data = res.data;
 		const size_t written_size = sizeof(uint32_t) + data.size();
 
 		const int new_sector_count = get_sector_count_from_bytes(written_size);
@@ -419,7 +433,7 @@ Error RegionFile::save_block(Vector3i position, VoxelBufferInternal &block) {
 			f.seek(block_offset);
 
 			f.store_32(data.size());
-			store_buffer(f, to_span(data));
+			godot::store_buffer(f, to_span(data));
 
 			const size_t end_pos = f.get_position();
 			CRASH_COND(written_size != (end_pos - block_offset));
@@ -437,7 +451,7 @@ Error RegionFile::save_block(Vector3i position, VoxelBufferInternal &block) {
 			f.seek(block_offset);
 
 			f.store_32(data.size());
-			store_buffer(f, to_span(data));
+			godot::store_buffer(f, to_span(data));
 
 			const size_t end_pos = f.get_position();
 			CRASH_COND(written_size != (end_pos - block_offset));
@@ -501,18 +515,18 @@ void RegionFile::remove_sectors_from_block(Vector3i block_pos, unsigned int p_se
 	CRASH_COND(p_sector_count > block_info.get_sector_count());
 	CRASH_COND(dst_offset < _blocks_begin_offset);
 
-	std::vector<uint8_t> temp;
+	StdVector<uint8_t> temp;
 	temp.resize(sector_size);
 
 	// TODO There might be a faster way to shrink a file
 	// Erase sectors from file
 	while (src_offset < old_end_offset) {
 		f.seek(src_offset);
-		const size_t read_bytes = get_buffer(f, to_span(temp));
+		const size_t read_bytes = godot::get_buffer(f, to_span(temp));
 		CRASH_COND(read_bytes != sector_size); // Corrupted file
 
 		f.seek(dst_offset);
-		store_buffer(f, to_span(temp));
+		godot::store_buffer(f, to_span(temp));
 
 		src_offset += sector_size;
 		dst_offset += sector_size;
@@ -573,9 +587,7 @@ bool RegionFile::migrate_from_v2_to_v3(FileAccess &f, RegionFormat &format) {
 	const unsigned int extra_bytes_needed = new_header_size - old_header_size;
 
 	f.seek(MAGIC_AND_VERSION_SIZE);
-	insert_bytes(f, extra_bytes_needed);
-
-	f.seek(0);
+	godot::insert_bytes(f, extra_bytes_needed);
 
 	// Set version because otherwise `save_header` will attempt to migrate again causing stack-overflow
 	_header.version = FORMAT_VERSION;

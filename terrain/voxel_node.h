@@ -8,6 +8,9 @@
 #include "../streams/voxel_stream.h"
 #include "../util/godot/classes/geometry_instance_3d.h"
 #include "../util/godot/classes/node_3d.h"
+#ifdef TOOLS_ENABLED
+#include "../util/godot/core/version.h"
+#endif
 
 namespace zylann::voxel {
 

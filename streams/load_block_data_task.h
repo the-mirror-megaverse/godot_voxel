@@ -4,7 +4,7 @@
 #include "../engine/ids.h"
 #include "../engine/priority_dependency.h"
 #include "../engine/streaming_dependency.h"
-#include "../util/memory.h"
+#include "../util/memory/memory.h"
 #include "../util/tasks/threaded_task.h"
 
 namespace zylann::voxel {
@@ -16,7 +16,7 @@ public:
 	LoadBlockDataTask(VolumeID p_volume_id, Vector3i p_block_pos, uint8_t p_lod, uint8_t p_block_size,
 			bool p_request_instances, std::shared_ptr<StreamingDependency> p_stream_dependency,
 			PriorityDependency p_priority_dependency, bool generate_cache_data, bool generator_use_gpu,
-			const std::shared_ptr<VoxelData> &vdata);
+			const std::shared_ptr<VoxelData> &vdata, TaskCancellationToken cancellation_token);
 
 	~LoadBlockDataTask();
 
@@ -33,7 +33,7 @@ public:
 
 private:
 	PriorityDependency _priority_dependency;
-	std::shared_ptr<VoxelBufferInternal> _voxels;
+	std::shared_ptr<VoxelBuffer> _voxels;
 	UniquePtr<InstanceBlockData> _instances;
 	Vector3i _position; // In data blocks of the specified lod
 	VolumeID _volume_id;
@@ -49,6 +49,7 @@ private:
 	bool _generator_use_gpu = false;
 	std::shared_ptr<StreamingDependency> _stream_dependency;
 	std::shared_ptr<VoxelData> _voxel_data;
+	TaskCancellationToken _cancellation_token;
 };
 
 } // namespace zylann::voxel

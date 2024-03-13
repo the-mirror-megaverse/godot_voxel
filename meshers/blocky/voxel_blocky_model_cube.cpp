@@ -112,7 +112,9 @@ float VoxelBlockyModelCube::get_height() const {
 	return _height;
 }
 
-static void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyModel::BakedData &baked_data,
+namespace {
+
+void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyModel::BakedData &baked_data,
 		Vector2i p_atlas_size, bool bake_tangents) {
 	const float height = config.get_height();
 
@@ -120,7 +122,7 @@ static void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyMo
 	VoxelBlockyModel::BakedData::Surface &surface = baked_data.model.surfaces[0];
 
 	for (unsigned int side = 0; side < Cube::SIDE_COUNT; ++side) {
-		std::vector<Vector3f> &positions = surface.side_positions[side];
+		StdVector<Vector3f> &positions = surface.side_positions[side];
 		positions.resize(4);
 		for (unsigned int i = 0; i < 4; ++i) {
 			int corner = Cube::g_side_corners[side][i];
@@ -131,7 +133,7 @@ static void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyMo
 			positions[i] = p;
 		}
 
-		std::vector<int> &indices = surface.side_indices[side];
+		StdVector<int> &indices = surface.side_indices[side];
 		indices.resize(6);
 		for (unsigned int i = 0; i < 6; ++i) {
 			indices[i] = Cube::g_side_quad_triangles[side][i];
@@ -164,7 +166,7 @@ static void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyMo
 
 	for (unsigned int side = 0; side < Cube::SIDE_COUNT; ++side) {
 		surface.side_uvs[side].resize(4);
-		std::vector<Vector2f> &uvs = surface.side_uvs[side];
+		StdVector<Vector2f> &uvs = surface.side_uvs[side];
 
 		const Vector2f *uv_norm = Cube::g_side_normals[side].y != 0 ? uv_norm_top_bottom : uv_norm_side;
 
@@ -173,7 +175,7 @@ static void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyMo
 		}
 
 		if (bake_tangents) {
-			std::vector<float> &tangents = surface.side_tangents[side];
+			StdVector<float> &tangents = surface.side_tangents[side];
 			for (unsigned int i = 0; i < 4; ++i) {
 				for (unsigned int j = 0; j < 4; ++j) {
 					tangents.push_back(Cube::g_side_tangents[side][j]);
@@ -184,6 +186,8 @@ static void bake_cube_geometry(const VoxelBlockyModelCube &config, VoxelBlockyMo
 
 	baked_data.empty = false;
 }
+
+} // namespace
 
 void VoxelBlockyModelCube::bake(BakedData &baked_data, bool bake_tangents, MaterialIndexer &materials) const {
 	baked_data.clear();

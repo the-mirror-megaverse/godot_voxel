@@ -372,7 +372,7 @@ Ref<Mesh> VoxelBlockyModel::make_mesh_from_baked_data(const BakedData &baked_dat
 		vertices.resize(vertex_count);
 		normals.resize(vertex_count);
 		if (tangents_enabled) {
-			tangents.resize(vertex_count);
+			tangents.resize(vertex_count * 4);
 		}
 		colors.resize(vertex_count);
 		uvs.resize(vertex_count);
@@ -510,7 +510,7 @@ void VoxelBlockyModel::_b_rotate_90(Vector3i::Axis axis, bool clockwise) {
 	rotate_90(math::Axis(axis), clockwise);
 }
 
-// void ortho_simplify(Span<const Vector3f> vertices, Span<const int> indices, std::vector<int> &output) {
+// void ortho_simplify(Span<const Vector3f> vertices, Span<const int> indices, StdVector<int> &output) {
 // TODO Optimization: implement mesh simplification based on axis-aligned triangles.
 // It could be very effective on mesh collisions with the blocky mesher.
 // }

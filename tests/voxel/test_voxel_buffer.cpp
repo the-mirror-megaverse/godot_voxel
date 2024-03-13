@@ -9,9 +9,9 @@ namespace zylann::voxel::tests {
 void test_voxel_buffer_create() {
 	// This test was a repro for a memory corruption crash. The point of this test is to check it doesn't crash,
 	// so there is no particular conditions to check.
-	VoxelBufferInternal generated_voxels;
+	VoxelBuffer generated_voxels;
 	generated_voxels.create(Vector3i(5, 5, 5));
-	generated_voxels.set_voxel_f(-0.7f, 3, 3, 3, VoxelBufferInternal::CHANNEL_SDF);
+	generated_voxels.set_voxel_f(-0.7f, 3, 3, 3, VoxelBuffer::CHANNEL_SDF);
 	generated_voxels.create(Vector3i(16, 16, 18));
 	// This was found to cause memory corruption at this point because channels got re-allocated using the new size,
 	// but were filled using the old size, which was greater, and accessed out of bounds memory.
@@ -62,7 +62,7 @@ public:
 void test_voxel_buffer_metadata() {
 	// Basic get and set
 	{
-		VoxelBufferInternal vb;
+		VoxelBuffer vb;
 		vb.create(10, 10, 10);
 
 		VoxelMetadata *meta = vb.get_or_create_voxel_metadata(Vector3i(1, 2, 3));
@@ -76,7 +76,7 @@ void test_voxel_buffer_metadata() {
 	}
 	// Serialization
 	{
-		VoxelBufferInternal vb;
+		VoxelBuffer vb;
 		vb.create(10, 10, 10);
 
 		{
@@ -110,9 +110,9 @@ void test_voxel_buffer_metadata() {
 
 		BlockSerializer::SerializeResult sresult = BlockSerializer::serialize(vb);
 		ZN_TEST_ASSERT(sresult.success);
-		std::vector<uint8_t> bytes = sresult.data;
+		StdVector<uint8_t> bytes = sresult.data;
 
-		VoxelBufferInternal rvb;
+		VoxelBuffer rvb;
 		ZN_TEST_ASSERT(BlockSerializer::deserialize(to_span(bytes), rvb));
 
 		const FlatMapMoveOnly<Vector3i, VoxelMetadata> &vb_meta_map = vb.get_voxel_metadata();
@@ -149,7 +149,7 @@ void test_voxel_buffer_metadata() {
 void test_voxel_buffer_metadata_gd() {
 	// Basic get and set (Godot)
 	{
-		Ref<gd::VoxelBuffer> vb;
+		Ref<godot::VoxelBuffer> vb;
 		vb.instantiate();
 		vb->create(10, 10, 10);
 
@@ -166,7 +166,7 @@ void test_voxel_buffer_metadata_gd() {
 	}
 	// Serialization (Godot)
 	{
-		Ref<gd::VoxelBuffer> vb;
+		Ref<godot::VoxelBuffer> vb;
 		vb.instantiate();
 		vb->create(10, 10, 10);
 
@@ -187,9 +187,9 @@ void test_voxel_buffer_metadata_gd() {
 
 		BlockSerializer::SerializeResult sresult = BlockSerializer::serialize(vb->get_buffer());
 		ZN_TEST_ASSERT(sresult.success);
-		std::vector<uint8_t> bytes = sresult.data;
+		StdVector<uint8_t> bytes = sresult.data;
 
-		Ref<gd::VoxelBuffer> vb2;
+		Ref<godot::VoxelBuffer> vb2;
 		vb2.instantiate();
 
 		ZN_TEST_ASSERT(BlockSerializer::deserialize(to_span(bytes), vb2->get_buffer()));
@@ -206,14 +206,16 @@ void test_voxel_buffer_metadata_gd() {
 
 		for (auto it = vb_meta_map.begin(); it != vb_meta_map.end(); ++it) {
 			const VoxelMetadata &meta = it->value;
-			ZN_TEST_ASSERT(meta.get_type() == gd::METADATA_TYPE_VARIANT);
+			ZN_TEST_ASSERT(meta.get_type() == godot::METADATA_TYPE_VARIANT);
 
 			const VoxelMetadata *meta2 = vb2_meta_map.find(it->key);
 			ZN_TEST_ASSERT(meta2 != nullptr);
 			ZN_TEST_ASSERT(meta2->get_type() == meta.get_type());
 
-			const gd::VoxelMetadataVariant &metav = static_cast<const gd::VoxelMetadataVariant &>(meta.get_custom());
-			const gd::VoxelMetadataVariant &meta2v = static_cast<const gd::VoxelMetadataVariant &>(meta2->get_custom());
+			const godot::VoxelMetadataVariant &metav =
+					static_cast<const godot::VoxelMetadataVariant &>(meta.get_custom());
+			const godot::VoxelMetadataVariant &meta2v =
+					static_cast<const godot::VoxelMetadataVariant &>(meta2->get_custom());
 			ZN_TEST_ASSERT(metav.data == meta2v.data);
 		}
 	}

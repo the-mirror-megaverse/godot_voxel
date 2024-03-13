@@ -4,7 +4,11 @@
 #include "../../util/math/conv.h"
 #include "../voxel_modifier_sdf.h"
 
-namespace zylann::voxel::gd {
+#ifdef TOOLS_ENABLED
+#include "../../util/godot/core/packed_arrays.h"
+#endif
+
+namespace zylann::voxel::godot {
 
 VoxelModifier::VoxelModifier() {
 	set_notify_local_transform(true);
@@ -179,4 +183,4 @@ void VoxelModifier::_bind_methods() {
 	BIND_ENUM_CONSTANT(OPERATION_REMOVE);
 }
 
-} // namespace zylann::voxel::gd
+} // namespace zylann::voxel::godot

@@ -14,6 +14,8 @@
 #include "../../util/profiling.h"
 #include "transvoxel_tables.cpp"
 
+using namespace zylann::godot;
+
 namespace zylann::voxel {
 
 namespace {
@@ -30,8 +32,8 @@ MeshArrays &get_tls_mesh_arrays() {
 	thread_local MeshArrays tls_mesh_arrays;
 	return tls_mesh_arrays;
 }
-std::vector<CellInfo> &get_tls_cell_infos() {
-	thread_local std::vector<CellInfo> tls_cell_infos;
+StdVector<CellInfo> &get_tls_cell_infos() {
+	thread_local StdVector<CellInfo> tls_cell_infos;
 	return tls_cell_infos;
 }
 } // namespace transvoxel
@@ -64,10 +66,10 @@ VoxelMesherTransvoxel::~VoxelMesherTransvoxel() {}
 
 int VoxelMesherTransvoxel::get_used_channels_mask() const {
 	if (_texture_mode == TEXTURES_BLEND_4_OVER_16) {
-		return (1 << VoxelBufferInternal::CHANNEL_SDF) | (1 << VoxelBufferInternal::CHANNEL_INDICES) |
-				(1 << VoxelBufferInternal::CHANNEL_WEIGHTS);
+		return (1 << VoxelBuffer::CHANNEL_SDF) | (1 << VoxelBuffer::CHANNEL_INDICES) |
+				(1 << VoxelBuffer::CHANNEL_WEIGHTS);
 	}
-	return (1 << VoxelBufferInternal::CHANNEL_SDF);
+	return (1 << VoxelBuffer::CHANNEL_SDF);
 }
 
 bool VoxelMesherTransvoxel::is_generating_collision_surface() const {
@@ -75,7 +77,9 @@ bool VoxelMesherTransvoxel::is_generating_collision_surface() const {
 	return true;
 }
 
-static void fill_surface_arrays(Array &arrays, const transvoxel::MeshArrays &src) {
+namespace {
+
+void fill_surface_arrays(Array &arrays, const transvoxel::MeshArrays &src) {
 	PackedVector3Array vertices;
 	PackedVector3Array normals;
 	PackedFloat32Array lod_data; // 4*float32
@@ -109,8 +113,8 @@ static void fill_surface_arrays(Array &arrays, const transvoxel::MeshArrays &src
 }
 
 template <typename T>
-static void remap_vertex_array(const std::vector<T> &src_data, std::vector<T> &dst_data,
-		const std::vector<unsigned int> &remap_indices, unsigned int unique_vertex_count) {
+void remap_vertex_array(const StdVector<T> &src_data, StdVector<T> &dst_data,
+		const StdVector<unsigned int> &remap_indices, unsigned int unique_vertex_count) {
 	if (src_data.size() == 0) {
 		dst_data.clear();
 		return;
@@ -120,7 +124,7 @@ static void remap_vertex_array(const std::vector<T> &src_data, std::vector<T> &d
 			&dst_data[0], &src_data[0], src_data.size(), sizeof(T), remap_indices.data());
 }
 
-static void simplify(const transvoxel::MeshArrays &src_mesh, transvoxel::MeshArrays &dst_mesh, float p_target_ratio,
+void simplify(const transvoxel::MeshArrays &src_mesh, transvoxel::MeshArrays &dst_mesh, float p_target_ratio,
 		float p_error_threshold) {
 	ZN_PROFILE_SCOPE();
 
@@ -133,7 +137,7 @@ static void simplify(const transvoxel::MeshArrays &src_mesh, transvoxel::MeshArr
 
 	const unsigned int target_index_count = p_target_ratio * src_mesh.indices.size();
 
-	static thread_local std::vector<unsigned int> lod_indices;
+	static thread_local StdVector<unsigned int> lod_indices;
 	lod_indices.clear();
 	lod_indices.resize(src_mesh.indices.size());
 
@@ -157,7 +161,7 @@ static void simplify(const transvoxel::MeshArrays &src_mesh, transvoxel::MeshArr
 	Array surface;
 	surface.resize(Mesh::ARRAY_MAX);
 
-	static thread_local std::vector<unsigned int> remap_indices;
+	static thread_local StdVector<unsigned int> remap_indices;
 	remap_indices.clear();
 	remap_indices.resize(src_mesh.vertices.size());
 
@@ -178,10 +182,10 @@ static void simplify(const transvoxel::MeshArrays &src_mesh, transvoxel::MeshArr
 struct DeepSampler : transvoxel::IDeepSDFSampler {
 	VoxelGenerator &generator;
 	const VoxelData &data;
-	const VoxelBufferInternal::ChannelId sdf_channel;
+	const VoxelBuffer::ChannelId sdf_channel;
 	const Vector3i origin;
 
-	DeepSampler(VoxelGenerator &p_generator, const VoxelData &p_data, VoxelBufferInternal::ChannelId p_sdf_channel,
+	DeepSampler(VoxelGenerator &p_generator, const VoxelData &p_data, VoxelBuffer::ChannelId p_sdf_channel,
 			Vector3i p_origin) :
 			generator(p_generator), data(p_data), sdf_channel(p_sdf_channel), origin(p_origin) {}
 
@@ -191,7 +195,7 @@ struct DeepSampler : transvoxel::IDeepSDFSampler {
 		/*const Vector3i lod_pos = position_in_voxels >> lod_index;
 		const VoxelDataLodMap::Lod &lod = data.lods[lod_index];
 		unsigned int bsm = 0;
-		std::shared_ptr<VoxelBufferInternal> voxels;
+		std::shared_ptr<VoxelBuffer> voxels;
 		{
 			RWLockRead rlock(lod.map_lock);
 			const Vector3i lod_bpos = lod_pos >> lod.map.get_block_size_pow2();
@@ -213,6 +217,8 @@ struct DeepSampler : transvoxel::IDeepSDFSampler {
 	}
 };
 
+} // namespace
+
 void VoxelMesherTransvoxel::build(VoxelMesher::Output &output, const VoxelMesher::Input &input) {
 	ZN_PROFILE_SCOPE();
 
@@ -220,7 +226,7 @@ void VoxelMesherTransvoxel::build(VoxelMesher::Output &output, const VoxelMesher
 	// static thread_local FixedArray<transvoxel::MeshArrays, Cube::SIDE_COUNT> tls_transition_mesh_arrays;
 	static thread_local transvoxel::MeshArrays tls_simplified_mesh_arrays;
 
-	const VoxelBufferInternal::ChannelId sdf_channel = VoxelBufferInternal::CHANNEL_SDF;
+	const VoxelBuffer::ChannelId sdf_channel = VoxelBuffer::CHANNEL_SDF;
 
 	// Initialize dynamic memory:
 	// These vectors are re-used.
@@ -229,7 +235,7 @@ void VoxelMesherTransvoxel::build(VoxelMesher::Output &output, const VoxelMesher
 	transvoxel::MeshArrays &mesh_arrays = transvoxel::get_tls_mesh_arrays();
 	mesh_arrays.clear();
 
-	const VoxelBufferInternal &voxels = input.voxels;
+	const VoxelBuffer &voxels = input.voxels;
 	if (voxels.is_uniform(sdf_channel)) {
 		// There won't be anything to polygonize since the SDF has no variations, so it can't cross the isolevel
 		return;
@@ -238,7 +244,7 @@ void VoxelMesherTransvoxel::build(VoxelMesher::Output &output, const VoxelMesher
 	// const uint64_t time_before = Time::get_singleton()->get_ticks_usec();
 
 	transvoxel::DefaultTextureIndicesData default_texture_indices_data;
-	std::vector<transvoxel::CellInfo> *cell_infos = nullptr;
+	StdVector<transvoxel::CellInfo> *cell_infos = nullptr;
 	if (input.detail_texture_hint) {
 		transvoxel::get_tls_cell_infos().clear();
 		cell_infos = &transvoxel::get_tls_cell_infos();
@@ -311,7 +317,7 @@ void VoxelMesherTransvoxel::build(VoxelMesher::Output &output, const VoxelMesher
 }
 
 // Only exists for testing
-Ref<ArrayMesh> VoxelMesherTransvoxel::build_transition_mesh(Ref<gd::VoxelBuffer> voxels, int direction) {
+Ref<ArrayMesh> VoxelMesherTransvoxel::build_transition_mesh(Ref<godot::VoxelBuffer> voxels, int direction) {
 	static thread_local transvoxel::Cache s_cache;
 	static thread_local transvoxel::MeshArrays s_mesh_arrays;
 
@@ -319,7 +325,7 @@ Ref<ArrayMesh> VoxelMesherTransvoxel::build_transition_mesh(Ref<gd::VoxelBuffer>
 
 	ERR_FAIL_COND_V(voxels.is_null(), Ref<ArrayMesh>());
 
-	if (voxels->is_uniform(VoxelBufferInternal::CHANNEL_SDF)) {
+	if (voxels->is_uniform(VoxelBuffer::CHANNEL_SDF)) {
 		// Uniform SDF won't produce any surface
 		return Ref<ArrayMesh>();
 	}
@@ -328,7 +334,7 @@ Ref<ArrayMesh> VoxelMesherTransvoxel::build_transition_mesh(Ref<gd::VoxelBuffer>
 	// For now we can't support proper texture indices in this specific case
 	transvoxel::DefaultTextureIndicesData default_texture_indices_data;
 	default_texture_indices_data.use = false;
-	transvoxel::build_transition_mesh(voxels->get_buffer(), VoxelBufferInternal::CHANNEL_SDF, direction, 0,
+	transvoxel::build_transition_mesh(voxels->get_buffer(), VoxelBuffer::CHANNEL_SDF, direction, 0,
 			static_cast<transvoxel::TexturingMode>(_texture_mode), s_cache, s_mesh_arrays,
 			default_texture_indices_data);
 
